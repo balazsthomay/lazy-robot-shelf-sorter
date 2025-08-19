@@ -1,1 +1,15 @@
 CLAUDE.md
+
+specs/
+
+.mcp.json
+
+.claude/
+assets/
+
+.env
+
+ycb-tools/
+mujoco_scanned_objects/
+
+src/__pycache__/
