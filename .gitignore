@@ -17,3 +17,7 @@ src/__pycache__/
 .DS_Store 
 
 src/tests/__pycache__/
+
+src/.pytest_cache/
+src/.coverage
+src/tests/.pytest_cache/
