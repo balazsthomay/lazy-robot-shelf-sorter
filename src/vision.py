@@ -1,14 +1,28 @@
 #!/usr/bin/env python3
 """
-Camera System Architecture
-Milestone 5: Flexible perception foundation for DINO integration
+Vision System Architecture
+Phase 2: DINO integration with visual similarity matching
 """
 
+import os
+import pickle
+import hashlib
 import numpy as np
 import pybullet as p
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 from interfaces import SimulationComponent
+
+# DINO model imports
+try:
+    import torch
+    import torch.nn.functional as F
+    from transformers import AutoModel, AutoImageProcessor
+    from PIL import Image
+    DINO_AVAILABLE = True
+except ImportError:
+    DINO_AVAILABLE = False
+    torch = None
 
 
 @dataclass
@@ -151,3 +165,122 @@ class CameraSystem(SimulationComponent):
                 "fov": self.config.fov
             }
         }
+
+
+class DinoModel(SimulationComponent):
+    """Simple DINO model for feature extraction"""
+    
+    def __init__(self):
+        if not DINO_AVAILABLE:
+            raise ImportError("Install torch and transformers for DINO support")
+        self.model = None
+        self.processor = None
+        
+    def initialize(self, use_gui: bool = False) -> None:
+        """Load DINO model with fallback"""
+        try:
+            model_name = "facebook/dinov3-vitb16-pretrain-lvd1689m"
+            self.processor = AutoImageProcessor.from_pretrained(model_name)
+            self.model = AutoModel.from_pretrained(model_name)
+            print(f"✅ Loaded {model_name}")
+        except Exception:
+            model_name = "facebook/dinov2-base"
+            self.processor = AutoImageProcessor.from_pretrained(model_name)
+            self.model = AutoModel.from_pretrained(model_name)
+            print(f"✅ Loaded fallback {model_name}")
+        
+        self.model.eval()
+        
+    def extract_features(self, image: Union[np.ndarray, 'Image.Image']) -> np.ndarray:
+        """Extract normalized features from image"""
+        if isinstance(image, np.ndarray):
+            image = Image.fromarray(image.astype(np.uint8))
+            
+        inputs = self.processor(image, return_tensors="pt")
+        
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            features = outputs.last_hidden_state[:, 0, :].numpy().flatten()
+            
+        # Normalize for cosine similarity
+        return features / (np.linalg.norm(features) + 1e-8)
+        
+    def cleanup(self) -> None:
+        """Clean up resources"""
+        self.model = None
+        self.processor = None
+        
+    def get_state(self) -> dict:
+        return {"initialized": self.model is not None}
+
+
+class ShelfZoneManager(SimulationComponent):
+    """Simple 3x2 zone manager for 3 shelves (18 total zones)"""
+    
+    def __init__(self):
+        self.zones = {}  # zone_id -> (x, y, z) center
+        
+    def initialize(self, use_gui: bool = False) -> None:
+        """Create 18 zones: 3 shelves × 6 zones each"""
+        zone_id = 0
+        for shelf in range(3):  # 3 shelves
+            shelf_z = shelf * 0.4  # 40cm between shelves
+            for x in range(3):  # 3 zones width
+                for y in range(2):  # 2 zones height
+                    center = (x * 0.3, y * 0.2, shelf_z)  # Simple grid
+                    self.zones[f"zone_{zone_id}"] = center
+                    zone_id += 1
+        print(f"✅ Created {len(self.zones)} zones")
+        
+    def get_zone_center(self, zone_id: str) -> Optional[Tuple[float, float, float]]:
+        """Get zone center coordinates"""
+        return self.zones.get(zone_id)
+        
+    def get_all_zones(self) -> Dict[str, Tuple[float, float, float]]:
+        """Get all zones"""
+        return self.zones.copy()
+        
+    def cleanup(self) -> None:
+        self.zones.clear()
+        
+    def get_state(self) -> dict:
+        return {"num_zones": len(self.zones)}
+
+
+class FeatureCache:
+    """Simple file-based feature caching"""
+    
+    def __init__(self, cache_dir: str = None):
+        if cache_dir is None:
+            cache_dir = os.path.expanduser("~/.cache/shelf-sorter")
+        self.cache_dir = cache_dir
+        os.makedirs(cache_dir, exist_ok=True)
+        
+    def _get_cache_path(self, key: str) -> str:
+        """Get cache file path for key"""
+        safe_key = key.replace("/", "_").replace(":", "_")
+        return os.path.join(self.cache_dir, f"{safe_key}.pkl")
+        
+    def store(self, key: str, embedding: np.ndarray) -> None:
+        """Store embedding in cache"""
+        cache_path = self._get_cache_path(key)
+        with open(cache_path, 'wb') as f:
+            pickle.dump(embedding, f)
+            
+    def load(self, key: str) -> Optional[np.ndarray]:
+        """Load embedding from cache"""
+        cache_path = self._get_cache_path(key)
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, 'rb') as f:
+                    return pickle.load(f)
+            except Exception:
+                return None
+        return None
+        
+    def clear(self) -> None:
+        """Clear all cached embeddings"""
+        if os.path.exists(self.cache_dir):
+            for file in os.listdir(self.cache_dir):
+                if file.endswith('.pkl'):
+                    os.remove(os.path.join(self.cache_dir, file))
