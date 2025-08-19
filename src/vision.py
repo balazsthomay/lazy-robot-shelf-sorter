@@ -177,19 +177,51 @@ class DinoModel(SimulationComponent):
         self.processor = None
         
     def initialize(self, use_gui: bool = False) -> None:
-        """Load DINO model with fallback"""
+        """Load DINO model with improved error handling and fallback"""
+        print("🔧 Initializing DINO model...")
+        
+        # Try DINOv3 first (primary model) - but it may not be available yet
+        model_name = "facebook/dinov3-vitb16-pretrain-lvd1689m"
         try:
-            model_name = "facebook/dinov3-vitb16-pretrain-lvd1689m"
-            self.processor = AutoImageProcessor.from_pretrained(model_name)
-            self.model = AutoModel.from_pretrained(model_name)
-            print(f"✅ Loaded {model_name}")
-        except Exception:
+            print(f"📥 Attempting to load {model_name}...")
+            
+            # Load with specific parameters for DINOv3
+            self.processor = AutoImageProcessor.from_pretrained(
+                model_name,
+                trust_remote_code=True
+            )
+            self.model = AutoModel.from_pretrained(
+                model_name,
+                trust_remote_code=True,
+                torch_dtype=torch.float32
+            )
+            
+            print(f"✅ Successfully loaded {model_name}")
+            self._current_model = model_name
+            
+        except Exception as e:
+            print(f"⚠️  DINOv3 loading failed: {str(e)}")
+            if "Unrecognized image processor" in str(e):
+                print("💡 DINOv3 may not be fully supported in current transformers version")
+            print("📥 Falling back to DINOv2...")
+            
+            # Fallback to DINOv2 (battle-tested)
             model_name = "facebook/dinov2-base"
-            self.processor = AutoImageProcessor.from_pretrained(model_name)
-            self.model = AutoModel.from_pretrained(model_name)
-            print(f"✅ Loaded fallback {model_name}")
+            try:
+                self.processor = AutoImageProcessor.from_pretrained(model_name)
+                self.model = AutoModel.from_pretrained(
+                    model_name,
+                    torch_dtype=torch.float32
+                )
+                print(f"✅ Successfully loaded fallback {model_name}")
+                self._current_model = model_name
+                
+            except Exception as fallback_error:
+                print(f"❌ Fallback loading also failed: {str(fallback_error)}")
+                raise RuntimeError(f"Could not load any DINO model. Primary error: {e}, Fallback error: {fallback_error}")
         
         self.model.eval()
+        print(f"🎯 Model ready: {self._current_model}")
         
     def extract_features(self, image: Union[np.ndarray, 'Image.Image']) -> np.ndarray:
         """Extract normalized features from image"""
@@ -215,18 +247,20 @@ class DinoModel(SimulationComponent):
         if not self.model:
             return {"initialized": False}
         
-        # Get model name from the loaded model
-        model_name = "unknown"
-        if hasattr(self.model, 'config') and hasattr(self.model.config, '_name_or_path'):
-            model_name = self.model.config._name_or_path
-        elif hasattr(self.model, 'name_or_path'):
-            model_name = self.model.name_or_path
+        # Use tracked model name or try to get from model config
+        model_name = getattr(self, '_current_model', "unknown")
+        if model_name == "unknown":
+            if hasattr(self.model, 'config') and hasattr(self.model.config, '_name_or_path'):
+                model_name = self.model.config._name_or_path
+            elif hasattr(self.model, 'name_or_path'):
+                model_name = self.model.name_or_path
         
         return {
             "initialized": True,
             "model_name": model_name,
             "embedding_dim": 768,
-            "device": "cpu"  # Simple default since we're not using device detection
+            "device": "cpu",
+            "is_dinov3": "dinov3" in model_name.lower()
         }
         
     def get_state(self) -> dict:

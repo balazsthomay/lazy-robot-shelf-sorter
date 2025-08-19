@@ -11,7 +11,9 @@ from unittest.mock import Mock, patch, MagicMock
 
 # Import components to test
 import sys
-sys.path.append('..')
+import os
+# Add src directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from vision import DinoModel, ShelfZoneManager, FeatureCache
 from placement import SimilarityEngine
 
