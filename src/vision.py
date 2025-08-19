@@ -210,6 +210,25 @@ class DinoModel(SimulationComponent):
         self.model = None
         self.processor = None
         
+    def get_model_info(self) -> dict:
+        """Get current model information"""
+        if not self.model:
+            return {"initialized": False}
+        
+        # Get model name from the loaded model
+        model_name = "unknown"
+        if hasattr(self.model, 'config') and hasattr(self.model.config, '_name_or_path'):
+            model_name = self.model.config._name_or_path
+        elif hasattr(self.model, 'name_or_path'):
+            model_name = self.model.name_or_path
+        
+        return {
+            "initialized": True,
+            "model_name": model_name,
+            "embedding_dim": 768,
+            "device": "cpu"  # Simple default since we're not using device detection
+        }
+        
     def get_state(self) -> dict:
         return {"initialized": self.model is not None}
 
