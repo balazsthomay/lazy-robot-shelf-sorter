@@ -12,7 +12,7 @@ from interfaces import SimulationComponent
 
 
 class RobotController(SimulationComponent):
-    """Simple robot controller using PyBullet's built-in robot"""
+    """Franka Panda robot controller (7-DOF arm + 2-DOF gripper)"""
     
     def __init__(self, physics_client: int = None):
         self.robot_id: Optional[int] = None
@@ -24,8 +24,8 @@ class RobotController(SimulationComponent):
         """Load and setup robot"""
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
         
-        # Use Kuka robot as Franka substitute
-        self.robot_id = p.loadURDF("kuka_iiwa/model.urdf", [0, -0.8, 0], physicsClientId=self.physics_client)
+        # Use Franka Panda robot (7-DOF arm + 2-DOF gripper)
+        self.robot_id = p.loadURDF("franka_panda/panda.urdf", [0, -0.8, 0], useFixedBase=True, physicsClientId=self.physics_client)
         self.num_joints = p.getNumJoints(self.robot_id, physicsClientId=self.physics_client)
         
         # Get controllable joints
@@ -34,16 +34,19 @@ class RobotController(SimulationComponent):
             joint_info = p.getJointInfo(self.robot_id, i, physicsClientId=self.physics_client)
             if joint_info[2] != p.JOINT_FIXED:  # Skip fixed joints
                 self.joint_indices.append(i)
+        
+        # For Franka Panda: arm joints are 0-6, end-effector is at joint 6 (7th arm joint)
+        self.arm_end_effector_link = 6  # panda_joint7 is the arm tip
                 
     def move_to_position(self, target_position: Tuple[float, float, float]) -> bool:
         """Move end effector to target position"""
         if self.robot_id is None:
             return False
             
-        # Simple IK using PyBullet
+        # Simple IK using PyBullet (use arm end-effector, not gripper)
         joint_positions = p.calculateInverseKinematics(
             self.robot_id,
-            self.num_joints - 1,  # End effector link
+            self.arm_end_effector_link,  # Arm end-effector (joint 6)
             target_position,
             physicsClientId=self.physics_client
         )
@@ -66,7 +69,7 @@ class RobotController(SimulationComponent):
         if self.robot_id is None:
             return (0, 0, 0)
             
-        link_state = p.getLinkState(self.robot_id, self.num_joints - 1, physicsClientId=self.physics_client)
+        link_state = p.getLinkState(self.robot_id, self.arm_end_effector_link, physicsClientId=self.physics_client)
         return link_state[0]  # Position
         
     def cleanup(self) -> None:

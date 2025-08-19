@@ -125,7 +125,7 @@ def run_working_demo():
     print("🎬 Running interactive simulation...")
     print("You should see:")
     print("- 3 stable wooden shelves (they won't fall!)")
-    print("- Kuka robot arm")
+    print("- Franka Panda robot arm (7-DOF + gripper)")
     print("- Colorful objects on shelf surfaces")
     print("- Robot will move periodically")
     print()

@@ -13,3 +13,7 @@ ycb-tools/
 mujoco_scanned_objects/
 
 src/__pycache__/
+
+.DS_Store 
+
+src/tests/__pycache__/
