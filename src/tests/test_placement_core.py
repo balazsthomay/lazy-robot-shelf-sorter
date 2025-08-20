@@ -107,6 +107,42 @@ class TestSpatialComponents(unittest.TestCase):
         
         position = manager.find_free_space("test_zone", 0.8, 0.8)
         self.assertIsNone(position)
+    
+    def test_zone_efficiency_tracking(self):
+        """Test Phase 3B: Zone efficiency tracking"""
+        manager = ShelfSpaceManager()
+        
+        # Set up zone
+        zone_bounds = Rectangle(0.0, 0.0, 1.0, 1.0)  # 1m x 1m zone
+        manager.set_zone_bounds("test_zone", zone_bounds)
+        
+        # Initially empty
+        self.assertEqual(manager.get_zone_efficiency("test_zone"), 0.0)
+        
+        # Add 25% occupied space
+        occupied = Rectangle(0.0, 0.0, 0.5, 0.5)  # 0.25 area
+        manager.add_occupied_space("test_zone", occupied)
+        self.assertEqual(manager.get_zone_efficiency("test_zone"), 0.25)
+        
+        # Add more space to fill zone over 90%
+        # Fill zone systematically to exceed 90%
+        filled_rects = [
+            Rectangle(0.5, 0.0, 0.3, 0.3),   # 9%
+            Rectangle(0.8, 0.0, 0.2, 0.3),   # 6%
+            Rectangle(0.5, 0.3, 0.5, 0.2),   # 10%
+            Rectangle(0.0, 0.5, 1.0, 0.4),   # 40%
+        ]
+        
+        for rect in filled_rects:
+            manager.add_occupied_space("test_zone", rect)
+        
+        # Check efficiency triggers optimization (should be >=90%)
+        efficiency = manager.get_zone_efficiency("test_zone")
+        self.assertGreaterEqual(efficiency, 0.9)
+        
+        # Should skip search due to efficiency check
+        position = manager.find_free_space("test_zone", 0.05, 0.05)
+        self.assertIsNone(position)
 
 
 class TestPlacementComponents(unittest.TestCase):
@@ -140,6 +176,21 @@ class TestPlacementComponents(unittest.TestCase):
         self.assertIn("zone_2", zone_ids)  # Has free space
         self.assertNotIn("zone_3", zone_ids)  # No bounds set, no free space
     
+    def test_candidate_generator_efficiency_bonus(self):
+        """Test Phase 3B: CandidateGenerator prefers less crowded zones"""
+        similarity_scores = {"zone_1": 0.8, "zone_2": 0.8}  # Same similarity
+        object_size = (0.1, 0.1)
+        
+        # Make zone_2 more crowded
+        occupied = Rectangle(0.0, 0.0, 0.8, 0.8)  # 64% of zone area
+        self.space_manager.add_occupied_space("zone_2", occupied)
+        
+        candidates = self.candidate_generator.generate(similarity_scores, object_size)
+        
+        # zone_1 should come first due to efficiency bonus (less crowded)
+        zone_ids = [zone_id for zone_id, _ in candidates]
+        self.assertEqual(zone_ids[0], "zone_1")
+    
     def test_constraint_checker(self):
         """Test BasicConstraintChecker follows SRP - only checks constraints"""
         # Valid position
@@ -160,6 +211,25 @@ class TestPlacementComponents(unittest.TestCase):
         """Test PlacementScorer follows SRP - only scores placements"""
         score = self.scorer.score_placement("zone_1", 0.85)
         self.assertEqual(score, 0.85)  # Simple pass-through for now
+    
+    def test_placement_scorer_strategies(self):
+        """Test Phase 3C: PlacementScorer strategy bonuses"""
+        from placement import PlacementStrategy
+        
+        base_score = 0.8
+        
+        # Test strategy bonuses
+        stack_score = self.scorer.score_placement("zone_1", base_score, PlacementStrategy.STACK)
+        self.assertAlmostEqual(stack_score, 0.85, places=6)  # +0.05 bonus
+        
+        lean_score = self.scorer.score_placement("zone_1", base_score, PlacementStrategy.LEAN)
+        self.assertAlmostEqual(lean_score, 0.83, places=6)  # +0.03 bonus
+        
+        group_score = self.scorer.score_placement("zone_1", base_score, PlacementStrategy.GROUP)
+        self.assertAlmostEqual(group_score, 0.82, places=6)  # +0.02 bonus
+        
+        place_score = self.scorer.score_placement("zone_1", base_score, PlacementStrategy.PLACE)
+        self.assertAlmostEqual(place_score, 0.8, places=6)  # No bonus
 
 
 class TestPlacementEngine(unittest.TestCase):
@@ -234,6 +304,40 @@ class TestPlacementEngine(unittest.TestCase):
         
         self.assertFalse(result.success)
         self.assertEqual(result.failure_reason, "No valid placement found")
+    
+    def test_placement_with_strategies(self):
+        """Test Phase 3C: Placement with different strategies"""
+        from placement import PlacementStrategy
+        
+        # Create test object embedding
+        object_embedding = np.random.rand(768)
+        object_embedding = object_embedding / np.linalg.norm(object_embedding)
+        
+        # Test STACK strategy
+        result = self.placement_engine.find_placement(
+            "test_stack_object", object_embedding, (0.1, 0.1), PlacementStrategy.STACK
+        )
+        
+        self.assertTrue(result.success)
+        self.assertIsNotNone(result.placement_command)
+        stack_score = result.placement_command.confidence_score
+        
+        # Test PLACE strategy for comparison
+        result_place = self.placement_engine.find_placement(
+            "test_place_object", object_embedding, (0.1, 0.1), PlacementStrategy.PLACE
+        )
+        place_score = result_place.placement_command.confidence_score
+        
+        # STACK should have higher score than PLACE due to strategy bonus
+        self.assertGreater(stack_score, place_score)
+        
+        # Test LEAN strategy
+        result = self.placement_engine.find_placement(
+            "test_lean_object", object_embedding, (0.1, 0.1), PlacementStrategy.LEAN
+        )
+        
+        self.assertTrue(result.success)
+        self.assertIsNotNone(result.placement_command)
 
 
 class TestIntegrationWithPhase2(unittest.TestCase):

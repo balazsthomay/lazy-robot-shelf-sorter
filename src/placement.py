@@ -108,9 +108,16 @@ class CandidateGenerator:
         """Generate candidate positions with size-adaptive sampling"""
         candidates = []
         
-        # Sort zones by similarity (highest first)  
+        # Sort zones by similarity with efficiency bonus (Phase 3B optimization)
+        def zone_score(zone_id):
+            similarity = similarity_scores[zone_id]
+            efficiency = self.space_manager.get_zone_efficiency(zone_id)
+            # Small bonus for less crowded zones (up to 10% boost)
+            efficiency_bonus = (1.0 - efficiency) * 0.1
+            return similarity + efficiency_bonus
+        
         sorted_zones = sorted(similarity_scores.keys(),
-                            key=lambda zone: similarity_scores[zone],
+                            key=zone_score,
                             reverse=True)
         
         # KISS: Find first valid position in each zone
@@ -149,10 +156,21 @@ class BasicConstraintChecker:
 class PlacementScorer:
     """SRP: Single responsibility - score placement options"""
     
-    def score_placement(self, zone_id: str, similarity_score: float) -> float:
-        """Score a placement option"""
-        # KISS: For now, just return similarity score
-        return similarity_score
+    def score_placement(self, zone_id: str, similarity_score: float, 
+                       strategy: PlacementStrategy = PlacementStrategy.PLACE) -> float:
+        """Score a placement option with strategy consideration"""
+        # KISS: Base score is similarity, small strategy bonus
+        base_score = similarity_score
+        
+        # Simple strategy bonuses (Phase 3C)
+        if strategy == PlacementStrategy.STACK:
+            return base_score + 0.05  # Small bonus for stacking
+        elif strategy == PlacementStrategy.LEAN:
+            return base_score + 0.03  # Small bonus for leaning
+        elif strategy == PlacementStrategy.GROUP:
+            return base_score + 0.02  # Small bonus for grouping
+        
+        return base_score
 
 
 class PlacementEngine(SimulationComponent):
@@ -174,9 +192,10 @@ class PlacementEngine(SimulationComponent):
         pass
     
     def find_placement(self, object_id: str, object_embedding: np.ndarray, 
-                      object_size: Tuple[float, float] = (0.1, 0.1)) -> PlacementResult:
+                      object_size: Tuple[float, float] = (0.1, 0.1),
+                      preferred_strategy: PlacementStrategy = PlacementStrategy.PLACE) -> PlacementResult:
         """
-        Find best placement for object
+        Find best placement for object with strategy consideration
         KISS: Simple pipeline without over-engineering
         """
         # Get similarity scores from Phase 2
@@ -192,31 +211,75 @@ class PlacementEngine(SimulationComponent):
         # Generate candidates with size-adaptive sampling
         candidates = self.candidate_generator.generate(similarity_scores, object_size)
         
-        # Find first valid placement
-        for zone_id, position_2d in candidates:
-            position_3d = (position_2d[0], position_2d[1], 0.0)  # Add Z coordinate
-            
-            if self.constraint_checker.is_valid_position(zone_id, position_3d, object_size):
-                score = self.scorer.score_placement(zone_id, similarity_scores[zone_id])
+        # Try preferred strategy first, then fallback to PLACE
+        strategies_to_try = [preferred_strategy]
+        if preferred_strategy != PlacementStrategy.PLACE:
+            strategies_to_try.append(PlacementStrategy.PLACE)
+        
+        for strategy in strategies_to_try:
+            for zone_id, position_2d in candidates:
+                position_3d = self._apply_strategy(strategy, position_2d, object_size, zone_id)
                 
-                placement_command = PlacementCommand(
-                    object_id=object_id,
-                    zone_id=zone_id,
-                    position=position_3d,
-                    orientation=(0.0, 0.0, 0.0, 1.0),  # Identity quaternion
-                    confidence_score=score
-                )
-                
-                return PlacementResult(
-                    success=True,
-                    placement_command=placement_command
-                )
+                if self.constraint_checker.is_valid_position(zone_id, position_3d, object_size):
+                    score = self.scorer.score_placement(zone_id, similarity_scores[zone_id], strategy)
+                    
+                    placement_command = PlacementCommand(
+                        object_id=object_id,
+                        zone_id=zone_id,
+                        position=position_3d,
+                        orientation=(0.0, 0.0, 0.0, 1.0),  # Identity quaternion
+                        confidence_score=score
+                    )
+                    
+                    return PlacementResult(
+                        success=True,
+                        placement_command=placement_command
+                    )
         
         return PlacementResult(
             success=False,
             placement_command=None,
             failure_reason="No valid placement found"
         )
+    
+    def _apply_strategy(self, strategy: PlacementStrategy, position_2d: Tuple[float, float], 
+                       object_size: Tuple[float, float], zone_id: str) -> Tuple[float, float, float]:
+        """Apply placement strategy to determine final 3D position"""
+        x, y = position_2d
+        
+        if strategy == PlacementStrategy.STACK:
+            # KISS: Simple stacking - check if zone has existing objects, stack on top
+            efficiency = self.space_manager.get_zone_efficiency(zone_id)
+            if efficiency > 0.3:  # If zone has some objects, try to stack
+                z = 0.15  # Simple 15cm stacking height
+            else:
+                z = 0.0  # Ground level if zone is mostly empty
+                
+        elif strategy == PlacementStrategy.LEAN:
+            # KISS: Simple leaning - push object toward back of zone
+            zone_bounds = self.space_manager.zone_bounds.get(zone_id)
+            if zone_bounds:
+                y = zone_bounds.y + zone_bounds.height - object_size[1] - 0.02  # 2cm from back wall
+            z = 0.0  # Ground level
+            
+        elif strategy == PlacementStrategy.GROUP:
+            # KISS: Simple grouping - try to cluster objects together  
+            efficiency = self.space_manager.get_zone_efficiency(zone_id)
+            if efficiency > 0.2:  # If objects exist, try to get closer to them
+                # Simple heuristic - move toward center of occupied space
+                zone_bounds = self.space_manager.zone_bounds.get(zone_id)
+                if zone_bounds:
+                    center_x = zone_bounds.x + zone_bounds.width / 2
+                    center_y = zone_bounds.y + zone_bounds.height / 2
+                    # Move 20% toward center
+                    x = 0.8 * x + 0.2 * center_x
+                    y = 0.8 * y + 0.2 * center_y
+            z = 0.0
+            
+        else:  # PlacementStrategy.PLACE (default)
+            z = 0.0  # Ground level placement
+        
+        return (x, y, z)
     
     def _get_zone_center(self, zone_id: str) -> Tuple[float, float, float]:
         """Get center position of zone - placeholder"""

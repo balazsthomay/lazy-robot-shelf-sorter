@@ -36,6 +36,7 @@ class ShelfSpaceManager(SimulationComponent):
     def __init__(self):
         self.occupied_rectangles: Dict[str, List[Rectangle]] = {}  # zone_id -> rectangles
         self.zone_bounds: Dict[str, Rectangle] = {}  # zone_id -> boundary
+        self._zone_efficiency: Dict[str, float] = {}  # simple efficiency tracking
         
     def initialize(self, use_gui: bool = False) -> None:
         """Initialize space manager"""
@@ -53,11 +54,23 @@ class ShelfSpaceManager(SimulationComponent):
         if zone_id not in self.occupied_rectangles:
             self.occupied_rectangles[zone_id] = []
         self.occupied_rectangles[zone_id].append(rect)
+        
+        # Update efficiency tracking - simple percentage of occupied space
+        if zone_id in self.zone_bounds:
+            zone_bound = self.zone_bounds[zone_id]
+            zone_area = zone_bound.width * zone_bound.height
+            occupied_area = sum(r.width * r.height for r in self.occupied_rectangles[zone_id])
+            self._zone_efficiency[zone_id] = min(occupied_area / zone_area, 1.0)
     
     def find_free_space(self, zone_id: str, required_width: float, 
                        required_height: float) -> Optional[Tuple[float, float]]:
         """Find free space in zone for object of given size"""
         if zone_id not in self.zone_bounds:
+            return None
+        
+        # Quick efficiency check - if zone is nearly full, skip detailed search
+        efficiency = self._zone_efficiency.get(zone_id, 0.0)
+        if efficiency >= 0.9:  # 90% full or more
             return None
         
         zone_bound = self.zone_bounds[zone_id]
@@ -87,11 +100,16 @@ class ShelfSpaceManager(SimulationComponent):
         self.occupied_rectangles.clear()
         self.zone_bounds.clear()
     
+    def get_zone_efficiency(self, zone_id: str) -> float:
+        """Get zone space utilization efficiency (0.0 to 1.0)"""
+        return self._zone_efficiency.get(zone_id, 0.0)
+    
     def get_state(self) -> dict:
         """Get current state"""
         return {
             "num_zones": len(self.zone_bounds),
-            "total_occupied_spaces": sum(len(rects) for rects in self.occupied_rectangles.values())
+            "total_occupied_spaces": sum(len(rects) for rects in self.occupied_rectangles.values()),
+            "average_efficiency": sum(self._zone_efficiency.values()) / max(len(self._zone_efficiency), 1)
         }
 
 
