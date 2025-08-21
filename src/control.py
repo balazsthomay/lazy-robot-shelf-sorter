@@ -8,7 +8,9 @@ import pybullet as p
 import pybullet_data
 import numpy as np
 import time
-from typing import List, Tuple, Optional, TYPE_CHECKING
+import json
+import os
+from typing import List, Tuple, Optional, TYPE_CHECKING, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
 from interfaces import SimulationComponent
@@ -299,7 +301,8 @@ class MotionController:
     def __init__(self, robot_controller: RobotController, 
                  pickup_location: Tuple[float, float, float] = None,
                  shelf_geometry: Optional[ShelfGeometry] = None,
-                 object_detector: Optional['ObjectDetector'] = None):
+                 object_detector: Optional['ObjectDetector'] = None,
+                 grasp_library_path: str = "grasps.json"):
         self.robot = robot_controller
         self.pickup_location = pickup_location  # Manual mode (fallback)
         self.object_detector = object_detector  # Vision mode (preferred)
@@ -310,9 +313,41 @@ class MotionController:
         # Phase 4C: Enhanced collision avoidance
         self.shelf_geometry = shelf_geometry
         
+        # Step 1: Load grasp library for adaptive grasping
+        self.grasp_library = self._load_grasp_library(grasp_library_path)
+        
         # Validate configuration
         if not object_detector and not pickup_location:
             raise ValueError("Either object_detector or pickup_location must be provided")
+    
+    def _load_grasp_library(self, grasp_library_path: str) -> Dict[str, Any]:
+        """Load grasp configurations from JSON file"""
+        try:
+            if os.path.exists(grasp_library_path):
+                with open(grasp_library_path, 'r') as f:
+                    library = json.load(f)
+                    print(f"📖 Loaded grasp library with {len(library)} configurations")
+                    return library
+            else:
+                print(f"⚠️  Grasp library not found at {grasp_library_path}, using defaults")
+                return {"default": {
+                    "approach": "top_down",
+                    "pre_grasp_offset": [0, 0, 0.05],
+                    "grasp_offset": [0, 0, 0.01],
+                    "orientation": [0, 0, 0, 1],
+                    "gripper_width_range": [0.02, 0.08],
+                    "grasp_force": 50
+                }}
+        except Exception as e:
+            print(f"⚠️  Error loading grasp library: {e}, using defaults")
+            return {"default": {
+                "approach": "top_down",
+                "pre_grasp_offset": [0, 0, 0.05],
+                "grasp_offset": [0, 0, 0.01],
+                "orientation": [0, 0, 0, 1],
+                "gripper_width_range": [0.02, 0.08],
+                "grasp_force": 50
+            }}
     
     def _get_target_object_position(self) -> Tuple[float, float, float]:
         """Get object position from vision detection or manual coordinates
@@ -574,8 +609,15 @@ class MotionController:
         """Execute grasp with gradual closing and object position tracking"""
         print("🤏 Executing grasp sequence...")
         
+        # Step 1 Diagnostic Logging - Enhanced logging for baseline
+        print("📊 GRASP DIAGNOSTICS - START")
+        
         # Track object positions for validation (find nearest object to gripper)
         initial_object_positions = self._get_nearby_object_positions()
+        
+        # Log gripper state before grasping
+        initial_is_open, initial_width = self.robot.get_gripper_state()
+        print(f"📏 Initial gripper width: {initial_width:.4f}m")
         
         # Step 1: Ensure gripper is fully open
         print("   1. Opening gripper fully...")
@@ -636,6 +678,22 @@ class MotionController:
         else:
             grasp_successful = True
             print(f"🎯 Grasp result: SUCCESS - Object grasped (width: {final_width:.4f}m)")
+        
+        # Step 1 Diagnostic Logging - Enhanced end-of-grasp diagnostics
+        print("📊 GRASP DIAGNOSTICS - END")
+        print(f"📏 Width change: {initial_width:.4f}m → {final_width:.4f}m (Δ={initial_width-final_width:.4f}m)")
+        print(f"🔄 Object movement detected: {object_moved}")
+        print(f"🤏 Gripper has object: {gripper_has_object}")
+        
+        # Log torque values if available (for future force feedback analysis)
+        try:
+            joint_states = p.getJointStates(self.robot.robot_id, [9, 10], physicsClientId=self.robot.physics_client)
+            torques = [state[3] for state in joint_states]  # Applied joint torque
+            print(f"💪 Gripper joint torques: {torques[0]:.3f}N⋅m, {torques[1]:.3f}N⋅m")
+        except:
+            print("💪 Gripper torques: N/A")
+        
+        print("📊 GRASP DIAGNOSTICS - COMPLETE")
         
         return grasp_successful
     

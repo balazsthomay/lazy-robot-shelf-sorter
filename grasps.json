@@ -1,0 +1,38 @@
+{
+  "cube": {
+    "approach": "top_down",
+    "pre_grasp_offset": [0, 0, 0.05],
+    "grasp_offset": [0, 0, 0.01],
+    "orientation": [0, 0, 0, 1],
+    "gripper_width_range": [0.02, 0.08],
+    "grasp_force": 50,
+    "description": "Top-down pinch grasp for cubic objects"
+  },
+  "cylinder": {
+    "approach": "side",
+    "pre_grasp_offset": [0.05, 0, 0],
+    "grasp_offset": [0.01, 0, 0],
+    "orientation": [0, 0, 0.707, 0.707],
+    "gripper_width_range": [0.03, 0.10],
+    "grasp_force": 40,
+    "description": "Side grasp for cylindrical objects"
+  },
+  "sphere": {
+    "approach": "adaptive",
+    "pre_grasp_offset": [0, 0, 0.04],
+    "grasp_offset": [0, 0, 0.005],
+    "orientation": [0, 0, 0, 1],
+    "gripper_width_range": [0.025, 0.07],
+    "grasp_force": 30,
+    "description": "Adaptive grasp for spherical objects"
+  },
+  "default": {
+    "approach": "top_down",
+    "pre_grasp_offset": [0, 0, 0.05],
+    "grasp_offset": [0, 0, 0.01],
+    "orientation": [0, 0, 0, 1],
+    "gripper_width_range": [0.02, 0.08],
+    "grasp_force": 50,
+    "description": "Default top-down grasp for unknown objects"
+  }
+}

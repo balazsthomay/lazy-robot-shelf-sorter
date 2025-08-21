@@ -1,0 +1,61 @@
+{
+  "test_date": "2025-08-21 15:09:05",
+  "test_description": "Baseline cube size variation test",
+  "results": [
+    {
+      "cube_scale": 0.05,
+      "cube_size_cm": 5.0,
+      "run_number": 1,
+      "detection_success": true,
+      "detection_error": {
+        "x": 0.002790536778224384,
+        "y": 0.01716995595141546,
+        "z": 0.0
+      },
+      "grasp_success": false,
+      "execution_time": 1.4189770221710205,
+      "waypoints_completed": 1,
+      "total_waypoints": 8,
+      "failure_reason": "ik_failure"
+    },
+    {
+      "cube_scale": 0.07,
+      "cube_size_cm": 7.000000000000001,
+      "run_number": 2,
+      "detection_success": true,
+      "detection_error": {
+        "x": 0.0027789040901022855,
+        "y": 0.01718167993891545,
+        "z": 0.010000000000000002
+      },
+      "grasp_success": false,
+      "execution_time": 1.376438856124878,
+      "waypoints_completed": 1,
+      "total_waypoints": 8,
+      "failure_reason": "ik_failure"
+    },
+    {
+      "cube_scale": 0.09,
+      "cube_size_cm": 9.0,
+      "run_number": 3,
+      "detection_success": true,
+      "detection_error": {
+        "x": 0.002767384137091544,
+        "y": 0.017193294912176527,
+        "z": 0.019999999999999997
+      },
+      "grasp_success": false,
+      "execution_time": 1.3943910598754883,
+      "waypoints_completed": 1,
+      "total_waypoints": 8,
+      "failure_reason": "ik_failure"
+    },
+    {
+      "cube_scale": 0.11,
+      "cube_size_cm": 11.0,
+      "run_number": 4,
+      "detection_success": true,
+      "detection_error": {
+        "x": 0.0002652226589505702,
+        "y": 4.297350230458852e-05,
+        "z": 
