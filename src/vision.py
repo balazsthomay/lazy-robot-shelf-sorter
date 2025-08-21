@@ -31,8 +31,8 @@ class CameraConfiguration:
     image_width: int = 640
     image_height: int = 480
     fov: float = 60.0  # Field of view in degrees
-    near_plane: float = 0.1
-    far_plane: float = 10.0
+    near_plane: float = 0.02  # Tightened for better depth accuracy
+    far_plane: float = 5.0    # Reduced from 10.0
 
 
 @dataclass
@@ -50,10 +50,12 @@ class Camera:
     
     def __init__(self, position: Tuple[float, float, float], 
                  target: Tuple[float, float, float],
-                 config: CameraConfiguration):
+                 config: CameraConfiguration,
+                 physics_client: int = None):
         self.position = position
         self.target = target
         self.config = config
+        self.physics_client = physics_client
         self.view_matrix = None
         self.projection_matrix = None
         self._update_matrices()
@@ -83,7 +85,8 @@ class Camera:
             width=self.config.image_width,
             height=self.config.image_height,
             viewMatrix=self.view_matrix,
-            projectionMatrix=self.projection_matrix
+            projectionMatrix=self.projection_matrix,
+            physicsClientId=self.physics_client
         )
         
         # Convert RGB to numpy array (remove alpha channel)
@@ -108,10 +111,10 @@ class Camera:
 class CameraSystem(SimulationComponent):
     """Flexible camera system supporting multiple configurations"""
     
-    def __init__(self, config: CameraConfiguration):
+    def __init__(self, config: CameraConfiguration, physics_client: int = None):
         self.config = config
         self.cameras: Dict[str, Camera] = {}
-        self.physics_client = None
+        self.physics_client = physics_client
         
     def initialize(self, use_gui: bool = False) -> None:
         """Initialize camera system"""
@@ -124,17 +127,20 @@ class CameraSystem(SimulationComponent):
         camera_position = (1.0, 0.0, robot_height)  # 1m in front of shelf
         camera_target = (0.0, 0.0, robot_height * 0.7)  # Look at shelf area
         
-        camera = Camera(camera_position, camera_target, self.config)
+        camera = Camera(camera_position, camera_target, self.config, self.physics_client)
         self.cameras["front"] = camera
         return camera
         
     def setup_top_down_camera(self, shelf_center: Tuple[float, float, float]) -> Camera:
-        """Optional top-down camera for shelf"""
+        """Angled overhead camera for object detection (avoids PyBullet vertical rendering issues)"""
         x, y, z = shelf_center
-        camera_position = (x, y, z + 1.0)  # 1m above shelf
-        camera_target = (x, y, z)  # Look down at shelf
         
-        camera = Camera(camera_position, camera_target, self.config)
+        # Position camera at working angle that avoids PyBullet's vertical rendering bug
+        # Based on successful debug test: angled cameras work, vertical ones fail
+        camera_position = (x + 0.15, y - 0.15, z + 0.7)  # Smaller offset, closer camera
+        camera_target = (x, y, z)  # Look at target center
+        
+        camera = Camera(camera_position, camera_target, self.config, self.physics_client)
         camera_name = f"top_down_{len([k for k in self.cameras.keys() if k.startswith('top_down')])}"
         self.cameras[camera_name] = camera
         return camera
