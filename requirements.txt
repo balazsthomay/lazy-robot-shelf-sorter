@@ -1,0 +1,17 @@
+# Existing dependencies
+pybullet>=3.2.5
+numpy>=1.21.0
+opencv-python>=4.5.0
+torch>=1.12.0
+torchvision>=0.13.0
+matplotlib>=3.5.0
+
+# New dependencies for adaptive grasping
+stable-baselines3>=2.0.0
+gym>=0.21.0
+panda-gym>=3.0.0
+
+# Optional ML dependencies  
+scipy>=1.9.0
+scikit-learn>=1.1.0
+tensorboard>=2.9.0
