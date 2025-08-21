@@ -28,6 +28,11 @@ def main():
     p.setGravity(0, 0, -9.81)
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
     
+    # Physics optimization for stable grasping
+    p.setTimeStep(1./1000.)  # Smaller timestep (1ms) for stability
+    p.setPhysicsEngineParameter(numSolverIterations=150)  # More solver iterations
+    p.setPhysicsEngineParameter(numSubSteps=80)  # More substeps
+    
     # Better camera view
     p.resetDebugVisualizerCamera(
         cameraDistance=1.5,
@@ -56,12 +61,18 @@ def main():
         # Add object to pick up - ROBOT'S PRECISE REACH ZONE
         object_id = p.loadURDF(
             "cube.urdf",
-            [0.4, -0.2, 0.06],  # Raised slightly for better visibility
-            globalScaling=0.08  # Larger for reliable grasping (8cm instead of 5cm)
+            [0.4, -0.2, 0.04],  # Lower position for better grasping
+            globalScaling=0.05  # Smaller for better gripper fit (5cm cube)
         )
         
+        # Add friction to the cube for better grasping
+        p.changeDynamics(object_id, -1, 
+                        lateralFriction=1.0, 
+                        spinningFriction=0.005,
+                        rollingFriction=0.005)
+        
         # Visual markers - UPDATED FOR PRECISE REACH
-        p.addUserDebugText("PICKUP OBJECT", [0.4, -0.2, 0.15], 
+        p.addUserDebugText("PICKUP OBJECT", [0.4, -0.2, 0.12], 
                           textColorRGB=[1, 1, 0], textSize=1.5)
         p.addUserDebugText("TARGET SHELF", [0.7, 0.3, 0.5], 
                           textColorRGB=[0, 1, 1], textSize=1.5)
@@ -71,6 +82,16 @@ def main():
         # Initialize robot
         robot = RobotController(physics_client)
         robot.initialize()
+        
+        # Add friction to gripper fingers for better grasping
+        p.changeDynamics(robot.robot_id, 9,  # panda_finger_joint1
+                        lateralFriction=1.0, 
+                        spinningFriction=0.005,
+                        rollingFriction=0.005)
+        p.changeDynamics(robot.robot_id, 10,  # panda_finger_joint2
+                        lateralFriction=1.0, 
+                        spinningFriction=0.005,
+                        rollingFriction=0.005)
         
         print("📷 Setting up vision system...")
         
@@ -86,7 +107,7 @@ def main():
         # Setup overhead camera for object detection
         # Position camera closer and directly above the object
         overhead_camera = camera_system.setup_top_down_camera(
-            shelf_center=(0.4, -0.2, 0.06)  # Updated to match new object height
+            shelf_center=(0.4, -0.2, 0.04)  # Updated to match new object height
         )
         
         # Initialize object detector
@@ -120,6 +141,17 @@ def main():
         detections = object_detector.detect_objects_on_table()
         print(object_detector.get_detection_summary(detections))
         
+        # Compare detected position with actual cube position for calibration
+        actual_cube_pos = [0.4, -0.2, 0.025]  # Known cube position (center of 5cm cube)
+        if detections:
+            detected_pos = detections[0].position
+            print(f"📍 Position comparison:")
+            print(f"   Actual cube: ({actual_cube_pos[0]:.3f}, {actual_cube_pos[1]:.3f}, {actual_cube_pos[2]:.3f})")
+            print(f"   Detected:    ({detected_pos[0]:.3f}, {detected_pos[1]:.3f}, {detected_pos[2]:.3f})")
+            print(f"   Error: X={detected_pos[0]-actual_cube_pos[0]:.3f}, Y={detected_pos[1]-actual_cube_pos[1]:.3f}, Z={detected_pos[2]-actual_cube_pos[2]:.3f}")
+        else:
+            print("⚠️  No objects detected for position comparison")
+        
         # Vision-guided motion controller (no manual coordinates!)
         motion_controller = MotionController(
             robot, 
@@ -134,13 +166,13 @@ def main():
         robot.control_gripper(open_gripper=True)
         for _ in range(50):
             p.stepSimulation()
-            time.sleep(1./120.)
+            time.sleep(1./1000.)  # Match physics timestep
         print("   Gripper opened")
         
         robot.control_gripper(open_gripper=False) 
         for _ in range(50):
             p.stepSimulation()
-            time.sleep(1./120.)
+            time.sleep(1./1000.)  # Match physics timestep
         print("   Gripper closed")
         
         # Demo 2: Simple movement
@@ -155,7 +187,7 @@ def main():
         success = robot.move_to_position(target)
         for _ in range(100):
             p.stepSimulation()
-            time.sleep(1./120.)
+            time.sleep(1./1000.)  # Match physics timestep
             
         final_pos = robot.get_end_effector_position()
         print(f"   Reached: ({final_pos[0]:.2f}, {final_pos[1]:.2f}, {final_pos[2]:.2f})")
@@ -164,7 +196,7 @@ def main():
         # Demo 3: Complete pick and place - SIMPLE VERSION
         print("\n🎯 Testing pick and place (SIMPLE)...")
         
-        # Very conservative, reachable placement
+        # Very conservative, reachable placement with small Z offset for better alignment
         placement_cmd = PlacementCommand(
             object_id="simple_object",
             zone_id="simple_zone",
@@ -172,6 +204,10 @@ def main():
             orientation=(0, 0, 0, 1),
             confidence_score=0.8
         )
+        
+        # Apply small Z offset to grasp waypoint for better alignment
+        if hasattr(motion_controller, '_grasp_z_offset'):
+            motion_controller._grasp_z_offset = 0.01  # 1cm offset
         
         print("   Starting pick-and-place sequence...")
         
@@ -219,10 +255,10 @@ def main():
         
         print(f"\n🎮 Demo complete! Close the PyBullet window when done.")
         
-        # Keep window open
+        # Keep window open with optimized timestep
         while True:
             p.stepSimulation()
-            time.sleep(1./120.)
+            time.sleep(1./1000.)  # Match physics timestep
             
     except KeyboardInterrupt:
         print("\n👋 Demo stopped")

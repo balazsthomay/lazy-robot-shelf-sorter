@@ -46,7 +46,7 @@ class RobotController(SimulationComponent):
         # For Franka Panda: arm joints are 0-6, end-effector is at joint 6 (7th arm joint)
         self.arm_end_effector_link = 11  # panda_grasptarget for accurate positioning
                 
-    def move_to_position(self, target_position: Tuple[float, float, float], timeout: float = 5.0) -> bool:
+    def move_to_position(self, target_position: Tuple[float, float, float], timeout: float = 8.0) -> bool:
         """Move end effector to target position and WAIT for completion"""
         if self.robot_id is None:
             return False
@@ -91,7 +91,7 @@ class RobotController(SimulationComponent):
         while time.time() - start_time < timeout:
             # Step simulation to allow motors to move joints
             p.stepSimulation(physicsClientId=self.physics_client)
-            time.sleep(1./240.)
+            time.sleep(1./1000.)  # Match physics timestep for faster convergence
             
             # Check ACTUAL joint positions (not kinematic model) for arm joints 0-6
             actual_joint_positions = []
@@ -151,7 +151,7 @@ class RobotController(SimulationComponent):
         if target_position is not None:
             gripper_position = target_position
         else:
-            gripper_position = 0.04 if open_gripper else 0.0  # open = 0.04m, closed = 0.0m
+            gripper_position = 0.08 if open_gripper else 0.0  # open = 0.08m (wider), closed = 0.0m
         
         # Use higher force for better grasping (based on official examples)
         for joint in gripper_joints:
@@ -185,8 +185,8 @@ class RobotController(SimulationComponent):
             joint_states.append(joint_state[0])  # position
         
         # Average gripper width (both fingers should be symmetric)
-        gripper_width = sum(joint_states) / len(joint_states) if joint_states else 0.04
-        is_open = gripper_width > 0.02  # Consider open if > 2cm
+        gripper_width = sum(joint_states) / len(joint_states) if joint_states else 0.08
+        is_open = gripper_width > 0.03  # Consider open if > 3cm
         
         return is_open, gripper_width
 
@@ -292,12 +292,8 @@ class ShelfGeometry:
 
 
 class MotionController:
-    """Phase 4: Robot motion controller with 3-waypoint strategy
-    
-    Implements KISS-principle motion control:
-    - 3-waypoint motion: current → pickup → safe → placement
-    - Basic collision avoidance via safe intermediate poses
-    - Simple retry logic for IK failures
+    """Phase 4: Robot motion controller with 8-waypoint strategy
+
     """
     
     def __init__(self, robot_controller: RobotController, 
@@ -504,6 +500,10 @@ class MotionController:
         pickup_x, pickup_y, pickup_z = pickup_position
         place_x, place_y, place_z = placement_position
         
+        # Apply small Z offset for better grasp alignment (reduced for smaller object)
+        grasp_z_offset = getattr(self, '_grasp_z_offset', 0.005)  # Default 0.5cm offset for 5cm cube
+        pickup_z_adjusted = pickup_z + grasp_z_offset
+        
         # Phase 4C: Calculate shelf-aware safe intermediate height
         if self.shelf_geometry:
             # Use shelf geometry to calculate safe height
@@ -512,19 +512,19 @@ class MotionController:
             safe_z = max(pickup_safe_height, place_safe_height) + self.shelf_clearance
         else:
             # Fallback: simple height calculation
-            safe_z = max(pickup_z, place_z) + self.shelf_clearance
+            safe_z = max(pickup_z_adjusted, place_z) + self.shelf_clearance
         
-        # FIXED: Proper grasping approach sequence
+        # FIXED: Proper grasping approach sequence with Z offset
         # Step 1: Approach from above (pre-grasp position)
-        pre_grasp_height = pickup_z + 0.10  # 10cm above object
+        pre_grasp_height = pickup_z_adjusted + 0.10  # 10cm above adjusted object
         
         waypoints = [
             # 1. Move to above pickup location (pre-grasp)
             ((pickup_x, pickup_y, pre_grasp_height), "move"), 
-            # 2. Descend to grasp height (slightly above object center)
-            ((pickup_x, pickup_y, pickup_z + 0.02), "move"),  # 2cm above center
+            # 2. Descend to grasp height (very close to object for small cube)
+            ((pickup_x, pickup_y, pickup_z_adjusted), "move"),  # At adjusted center level for 5cm cube
             # 3. Grasp object (at current position)
-            ((pickup_x, pickup_y, pickup_z + 0.02), "grasp"),
+            ((pickup_x, pickup_y, pickup_z_adjusted), "grasp"),
             # 4. Lift to safe height
             ((pickup_x, pickup_y, safe_z), "move"),
             # 5. Move to above placement location
@@ -595,7 +595,7 @@ class MotionController:
         print("   2. Gradual gripper closing...")
         
         # Start with partially open position and gradually close
-        grasp_positions = [0.03, 0.02, 0.015, 0.01, 0.008, 0.005]  # Gradually close
+        grasp_positions = [0.06, 0.05, 0.04, 0.03, 0.025, 0.02, 0.015, 0.01]  # More gentle gradual close
         
         for i, pos in enumerate(grasp_positions):
             print(f"      Closing to {pos:.3f}m...")
@@ -621,13 +621,13 @@ class MotionController:
         # Check if any objects moved (indicating interaction)
         object_moved = self._check_object_movement(initial_object_positions, final_object_positions)
         
-        # Gripper state validation
-        gripper_has_object = 0.007 < final_width < 0.035  # Object between fingers
+        # Gripper state validation (adjusted for 5cm cube)
+        gripper_has_object = 0.015 < final_width < 0.06  # Object between fingers - wider range
         
         if not gripper_has_object:
             grasp_successful = False
-            if final_width <= 0.007:
-                print(f"🎯 Grasp result: FAILED - Gripper fully closed (no object)")
+            if final_width <= 0.015:
+                print(f"🎯 Grasp result: FAILED - Gripper closed too much (no object or slipped)")
             else:
                 print(f"🎯 Grasp result: FAILED - Gripper too wide (no contact)")
         elif not object_moved:
@@ -643,7 +643,7 @@ class MotionController:
         """Wait for simulation to settle"""
         for _ in range(steps):
             p.stepSimulation(physicsClientId=self.robot.physics_client)
-            time.sleep(1./240.)
+            time.sleep(1./1000.)  # Match physics timestep
     
     def _get_nearby_object_positions(self) -> List[Tuple[float, float, float]]:
         """Get positions of objects near the gripper"""
@@ -697,8 +697,8 @@ class MotionController:
         """
         is_open, gripper_width = self.robot.get_gripper_state()
         
-        # Object must still be present (not fully closed gripper)
-        return 0.005 < gripper_width < 0.035
+        # Object must still be present (not fully closed gripper) - adjusted for 5cm cube
+        return 0.015 < gripper_width < 0.06
     
     def _check_safe_position(self, position: Tuple[float, float, float]) -> bool:
         """Phase 4C: Enhanced safety check with shelf collision avoidance"""
@@ -842,7 +842,8 @@ class Phase3To4Bridge:
             MotionFailureReason.GRASP_FAILURE.value
         ]
         
-        return any(reason in motion_result.failure_reason for reason in retryable_failures)
+        failure_reason = motion_result.failure_reason or ""
+        return any(reason in failure_reason for reason in retryable_failures)
     
     def _apply_retry_strategy(self, placement_command: PlacementCommand, retry_count: int) -> PlacementCommand:
         """Apply retry strategy with position jitter"""
