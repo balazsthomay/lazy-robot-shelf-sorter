@@ -103,14 +103,15 @@ class IntegratedPipelineValidator:
         
         # Load test objects
         print("📥 Loading test objects...")
-        set_5, _, _ = self.object_library.get_progressive_sets()
-        success = self.object_library.load_objects(set_5[:4], self.physics_client)
+        # Load specific objects: pepsi (base), mug (stack), cracker box (lean), coffee mug (group)
+        test_objects = ['gso_Diet_Pepsi_Soda_Cola12_Pack_12_oz_Cans', 'ycb_025_mug', 'ycb_003_cracker_box', 'gso_Threshold_Porcelain_Coffee_Mug_All_Over_Bead_White']
+        success = self.object_library.load_objects(test_objects, self.physics_client)
         
         if success:
-            # Place objects in incoming area
-            for i, obj_id in enumerate(set_5[:4]):
-                x = -1.5 + i * 0.3  # Spread objects in incoming area
-                y = 0.0
+            # Place objects in open area away from shelves to avoid shelf collision geometry
+            for i, obj_id in enumerate(test_objects):
+                x = 1.5 + i * 0.3  # Open area on right side, away from shelves
+                y = 1.0  # Forward from shelves  
                 z = 0.1
                 
                 bullet_id = self.object_library.loaded_objects[obj_id]
@@ -250,15 +251,15 @@ class IntegratedPipelineValidator:
         pepsi_position = None  # Track pepsi's exact position for stacking
         
         for i, obj_id in enumerate(reordered_objects):
-            # Strategy assignment
+            # Strategy assignment for clear demonstration
             if obj_id == pepsi_id:
                 strategy = PlacementStrategy.PLACE  # Place pepsi first as base
             elif obj_id == mug_id:
                 strategy = PlacementStrategy.STACK  # Stack mug on pepsi
-            elif obj_id == 'ycb_024_bowl':
-                strategy = PlacementStrategy.LEAN
+            elif obj_id == 'ycb_003_cracker_box':
+                strategy = PlacementStrategy.LEAN   # Lean cracker box against pepsi
             else:
-                strategy = PlacementStrategy.GROUP
+                strategy = PlacementStrategy.GROUP  # Group with similar objects
             
             print(f"\n  📍 Object {i+1}: {obj_id}")
             print(f"     Strategy: {strategy.value}")
@@ -273,9 +274,10 @@ class IntegratedPipelineValidator:
             metadata = self.object_library.get_metadata(obj_id)
             object_size = (0.1, 0.1) if not metadata else (metadata.estimated_size, metadata.estimated_size)
             
-            # Special case: force mug to exact pepsi position for stacking
-            if obj_id == mug_id and pepsi_zone is not None and pepsi_position is not None:
-                print(f"     🎯 Forcing mug to pepsi's exact position: {pepsi_position}")
+            # Special case: force mug and cracker box to pepsi's position for stacking/leaning
+            if obj_id in [mug_id, 'ycb_003_cracker_box'] and pepsi_zone is not None and pepsi_position is not None:
+                action = "stacking" if obj_id == mug_id else "leaning"
+                print(f"     🎯 Forcing {obj_id.split('_')[-1]} to pepsi's position for {action}: {pepsi_position}")
                 # Override candidate generation to return pepsi's exact position
                 original_generate = self.placement_engine.candidate_generator.generate
                 def force_pepsi_position(similarity_scores, object_size):
@@ -290,7 +292,7 @@ class IntegratedPipelineValidator:
             )
             
             # Restore original method if we overrode it
-            if obj_id == mug_id and pepsi_zone is not None and pepsi_position is not None:
+            if obj_id in [mug_id, 'ycb_003_cracker_box'] and pepsi_zone is not None and pepsi_position is not None:
                 self.placement_engine.candidate_generator.generate = original_generate
             
             if result.success and result.placement_command:

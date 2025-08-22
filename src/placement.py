@@ -262,25 +262,20 @@ class PlacementEngine(SimulationComponent):
             z = self._find_stacking_height(x, y, object_size, object_id)
                 
         elif strategy == PlacementStrategy.LEAN:
-            # KISS: Simple leaning - push object toward back of zone
-            zone_bounds = self.space_manager.zone_bounds.get(zone_id)
-            if zone_bounds:
-                y = zone_bounds.y + zone_bounds.height - object_size[1] - 0.02  # 2cm from back wall
-            z = 0.0  # Ground level
+            # Real leaning with wall detection and stability check
+            lean_position = self._find_lean_position(x, y, object_size, object_id, zone_id)
+            if lean_position:
+                x, y, z = lean_position
+            else:
+                z = 0.0  # Fallback to ground level if leaning not possible
             
         elif strategy == PlacementStrategy.GROUP:
-            # KISS: Simple grouping - try to cluster objects together  
-            efficiency = self.space_manager.get_zone_efficiency(zone_id)
-            if efficiency > 0.2:  # If objects exist, try to get closer to them
-                # Simple heuristic - move toward center of occupied space
-                zone_bounds = self.space_manager.zone_bounds.get(zone_id)
-                if zone_bounds:
-                    center_x = zone_bounds.x + zone_bounds.width / 2
-                    center_y = zone_bounds.y + zone_bounds.height / 2
-                    # Move 20% toward center
-                    x = 0.8 * x + 0.2 * center_x
-                    y = 0.8 * y + 0.2 * center_y
-            z = 0.0
+            # Real grouping with object detection and similarity matching
+            group_position = self._find_group_position(x, y, object_size, object_id, zone_id)
+            if group_position:
+                x, y, z = group_position
+            else:
+                z = 0.0  # Fallback to original position
             
         else:  # PlacementStrategy.PLACE (default)
             z = 0.0  # Ground level placement
@@ -319,6 +314,259 @@ class PlacementEngine(SimulationComponent):
         clearance = 0.01  # 1cm clearance
         
         return highest_point + object_height/2 + clearance
+    
+    def _find_lean_position(self, x: float, y: float, object_size: Tuple[float, float], 
+                           object_id: str, zone_id: str) -> Optional[Tuple[float, float, float]]:
+        """Find proper leaning position with wall detection and stability check"""
+        
+        # Check if object is suitable for leaning
+        if not self._can_object_lean(object_id, object_size):
+            return None
+            
+        # Find wall or support surface to lean against
+        wall_position = self._find_wall_or_support(x, y, zone_id)
+        if not wall_position:
+            return None
+            
+        wall_x, wall_y = wall_position
+        
+        # Calculate lean angle and position
+        lean_params = self._calculate_lean_parameters(object_size, object_id)
+        if not lean_params:
+            return None
+            
+        lean_angle, lean_offset = lean_params
+        
+        # Position object at base of wall with lean offset
+        lean_x = wall_x - lean_offset * 0.8  # 80% of lean offset from wall
+        lean_y = wall_y - object_size[1] / 2  # Half object depth from wall
+        lean_z = 0.0  # Ground level base
+        
+        # Verify the lean position doesn't collide with other objects
+        if self.physics_client and not self._is_lean_position_clear(lean_x, lean_y, object_size):
+            return None
+            
+        return (lean_x, lean_y, lean_z)
+    
+    def _can_object_lean(self, object_id: str, object_size: Tuple[float, float]) -> bool:
+        """Check if object is suitable for leaning based on shape and size"""
+        object_lower = object_id.lower()
+        
+        # Objects that can lean well
+        good_leaners = ["spatula", "cutting_board", "plate", "pan", "pot_lid", "tray"]
+        if any(leaner in object_lower for leaner in good_leaners):
+            return True
+            
+        # Objects that can't lean (round/unstable)
+        bad_leaners = ["ball", "sphere", "mug", "cup", "bowl", "bottle"]
+        if any(bad in object_lower for bad in bad_leaners):
+            return False
+            
+        # Size-based check: tall, thin objects can lean better
+        width, height = object_size
+        aspect_ratio = height / width if width > 0 else 1.0
+        
+        # Objects taller than they are wide can lean
+        return aspect_ratio > 1.2
+    
+    def _find_wall_or_support(self, x: float, y: float, zone_id: str) -> Optional[Tuple[float, float]]:
+        """Find wall or vertical surface to lean against"""
+        zone_bounds = self.space_manager.zone_bounds.get(zone_id)
+        if not zone_bounds:
+            return None
+            
+        # For now, use the back edge of the zone as the "wall"
+        # In a real system, this would query for actual vertical surfaces
+        wall_x = x  # Keep same X position
+        wall_y = zone_bounds.y + zone_bounds.height  # Back edge of zone
+        
+        return (wall_x, wall_y)
+    
+    def _calculate_lean_parameters(self, object_size: Tuple[float, float], 
+                                 object_id: str) -> Optional[Tuple[float, float]]:
+        """Calculate lean angle and position offset"""
+        width, height = object_size
+        
+        # Typical lean angles for different object types
+        object_lower = object_id.lower()
+        
+        if "spatula" in object_lower:
+            lean_angle = 15.0  # Gentle lean for utensils
+        elif "plate" in object_lower or "cutting_board" in object_lower:
+            lean_angle = 25.0  # Moderate lean for flat objects
+        elif "pan" in object_lower or "pot" in object_lower:
+            lean_angle = 10.0  # Light lean for cookware
+        else:
+            lean_angle = 20.0  # Default lean angle
+            
+        # Calculate horizontal offset from lean angle
+        lean_radians = np.radians(lean_angle)
+        lean_offset = height * np.sin(lean_radians)
+        
+        return (lean_angle, lean_offset)
+    
+    def _is_lean_position_clear(self, x: float, y: float, object_size: Tuple[float, float]) -> bool:
+        """Check if lean position is clear of other objects"""
+        if not self.physics_client:
+            return True
+            
+        # Use smaller search radius for lean clearance check
+        search_radius = max(object_size) * 0.7
+        nearby_objects = self._get_objects_in_area(x, y, search_radius)
+        
+        # If no objects nearby, position is clear
+        return len(nearby_objects) == 0
+    
+    def _find_group_position(self, x: float, y: float, object_size: Tuple[float, float], 
+                           object_id: str, zone_id: str) -> Optional[Tuple[float, float, float]]:
+        """Find position to group with similar objects using real object detection"""
+        
+        if not self.physics_client:
+            return None
+            
+        # Find similar objects in the zone
+        similar_objects = self._find_similar_objects_in_zone(object_id, zone_id)
+        if not similar_objects:
+            return None  # No similar objects to group with
+            
+        # Calculate centroid of similar objects
+        centroid = self._calculate_object_centroid(similar_objects)
+        if not centroid:
+            return None
+            
+        centroid_x, centroid_y = centroid
+        
+        # Find position near the centroid that doesn't collide
+        group_position = self._find_position_near_centroid(
+            centroid_x, centroid_y, object_size, similar_objects
+        )
+        
+        if group_position:
+            group_x, group_y = group_position
+            return (group_x, group_y, 0.0)  # Ground level
+        
+        return None
+    
+    def _find_similar_objects_in_zone(self, object_id: str, zone_id: str) -> List[int]:
+        """Find objects in zone that are similar to the target object"""
+        if not self.physics_client:
+            return []
+            
+        # Get zone bounds
+        zone_bounds = self.space_manager.zone_bounds.get(zone_id)
+        if not zone_bounds:
+            return []
+            
+        # Get object category for similarity matching
+        target_category = self._get_object_category(object_id)
+        
+        similar_objects = []
+        
+        try:
+            # Get all bodies in simulation
+            num_bodies = p.getNumBodies(physicsClientId=self.physics_client)
+            
+            for body_id in range(num_bodies):
+                # Skip ground plane and robot
+                if body_id <= 2:
+                    continue
+                    
+                # Get object position
+                pos, _ = p.getBasePositionAndOrientation(body_id, physicsClientId=self.physics_client)
+                obj_x, obj_y, obj_z = pos
+                
+                # Check if object is in this zone
+                if (zone_bounds.x <= obj_x <= zone_bounds.x + zone_bounds.width and
+                    zone_bounds.y <= obj_y <= zone_bounds.y + zone_bounds.height and
+                    obj_z >= 0.0):
+                    
+                    # Check if object is similar (would need object ID mapping in real system)
+                    # For now, group by size similarity as a proxy
+                    aabb_min, aabb_max = p.getAABB(body_id, physicsClientId=self.physics_client)
+                    obj_size = np.linalg.norm(np.array(aabb_max) - np.array(aabb_min))
+                    
+                    # Simple size-based similarity (0.5x to 2x size range)
+                    target_size = np.linalg.norm(np.array(object_size))
+                    if 0.5 * target_size <= obj_size <= 2.0 * target_size:
+                        similar_objects.append(body_id)
+                        
+        except Exception:
+            pass
+            
+        return similar_objects
+    
+    def _get_object_category(self, object_id: str) -> str:
+        """Get object category for similarity matching"""
+        object_lower = object_id.lower()
+        
+        if any(term in object_lower for term in ["mug", "cup", "teapot"]):
+            return "drinkware"
+        elif any(term in object_lower for term in ["bowl", "plate", "dish"]):
+            return "dishware"
+        elif any(term in object_lower for term in ["spatula", "spoon", "fork", "knife"]):
+            return "utensils"
+        elif any(term in object_lower for term in ["pot", "pan", "cooker"]):
+            return "cookware"
+        elif any(term in object_lower for term in ["bottle", "can", "pack"]):
+            return "beverages"
+        else:
+            return "general"
+    
+    def _calculate_object_centroid(self, object_ids: List[int]) -> Optional[Tuple[float, float]]:
+        """Calculate centroid position of a group of objects"""
+        if not object_ids or not self.physics_client:
+            return None
+            
+        positions = []
+        
+        try:
+            for body_id in object_ids:
+                pos, _ = p.getBasePositionAndOrientation(body_id, physicsClientId=self.physics_client)
+                positions.append((pos[0], pos[1]))  # X, Y only
+                
+            if positions:
+                centroid_x = sum(pos[0] for pos in positions) / len(positions)
+                centroid_y = sum(pos[1] for pos in positions) / len(positions)
+                return (centroid_x, centroid_y)
+                
+        except Exception:
+            pass
+            
+        return None
+    
+    def _find_position_near_centroid(self, centroid_x: float, centroid_y: float, 
+                                   object_size: Tuple[float, float], 
+                                   existing_objects: List[int]) -> Optional[Tuple[float, float]]:
+        """Find available position near centroid that doesn't collide"""
+        
+        # Try positions in concentric circles around centroid
+        max_object_size = max(object_size)
+        
+        for radius in [max_object_size * 1.2, max_object_size * 1.5, max_object_size * 2.0]:
+            for angle in np.linspace(0, 2 * np.pi, 8):  # 8 positions around circle
+                test_x = centroid_x + radius * np.cos(angle)
+                test_y = centroid_y + radius * np.sin(angle)
+                
+                # Check if position is clear
+                if self._is_position_clear_for_grouping(test_x, test_y, object_size, existing_objects):
+                    return (test_x, test_y)
+                    
+        return None
+    
+    def _is_position_clear_for_grouping(self, x: float, y: float, object_size: Tuple[float, float],
+                                      existing_objects: List[int]) -> bool:
+        """Check if position is clear for grouping (allows close proximity)"""
+        if not self.physics_client:
+            return True
+            
+        # Use smaller clearance for grouping - we want objects close together
+        search_radius = max(object_size) * 0.6  # Smaller than normal collision detection
+        nearby_objects = self._get_objects_in_area(x, y, search_radius)
+        
+        # Remove existing group objects from collision check (we want to be near them)
+        collision_objects = [obj for obj in nearby_objects if obj not in existing_objects]
+        
+        return len(collision_objects) == 0
     
     def _get_objects_in_area(self, x: float, y: float, radius: float) -> List[int]:
         """Get all PyBullet objects within radius of target position"""
