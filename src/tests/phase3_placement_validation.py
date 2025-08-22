@@ -111,6 +111,7 @@ class Phase3PlacementValidator:
                 similarity_engine=self.similarity_engine
             )
             self.placement_engine.initialize()
+            self.placement_engine.set_physics_client(self.physics_client)
             
             # Setup placement engine's space manager with our zone bounds
             for zone_id, bounds in [(zone_id, Rectangle(x - 0.3, y - 0.3, 0.6, 0.6)) 

@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """
-Working Visual Demo - Solves macOS GUI freezing issue
+Phase 1 Environment Setup Demo - Solves macOS GUI freezing issue
 Shows Phase 1 Foundation components with proper PyBullet GUI handling
 """
 
+import sys
 import time
 import pybullet as p
 import pybullet_data
+from pathlib import Path
+
+# Add src directory to path for imports
+src_path = Path(__file__).parent.parent
+sys.path.append(str(src_path))
+
 from simulation import ShelfEnvironment, ShelfConfiguration
 from control import RobotController
 
