@@ -59,7 +59,11 @@ class SimilarityEngine(SimulationComponent):
         
     def compute_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
         """Compute cosine similarity between embeddings"""
-        return np.dot(embedding1, embedding2)  # Already normalized
+        # Ensure embeddings are 1D to prevent array return from np.dot
+        emb1_flat = embedding1.flatten()
+        emb2_flat = embedding2.flatten()
+        result = np.dot(emb1_flat, emb2_flat)
+        return float(result)  # Ensure scalar return
         
     def find_best_zone(self, object_embedding: np.ndarray) -> Optional[str]:
         """Find best zone for object based on visual similarity"""
