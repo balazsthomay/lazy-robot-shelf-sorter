@@ -4,8 +4,6 @@ Object Library - Performance-Optimized Loading System
 Milestone 4: Performance-Optimized Object Library
 """
 
-import os
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
@@ -236,20 +234,12 @@ class ObjectLibrary:
             physicsClientId=self.physics_client
         )
         
-        # Apply texture manually if available
-        if metadata.texture_file and Path(metadata.texture_file).exists():
-            try:
-                texture_id = p.loadTexture(metadata.texture_file, physicsClientId=self.physics_client)
-                p.changeVisualShape(body_id, -1, textureUniqueId=texture_id, physicsClientId=self.physics_client)
-            except Exception:
-                # Fallback to category color if texture loading fails
-                color = self._get_category_color(metadata.category)
-                p.changeVisualShape(body_id, -1, rgbaColor=color, physicsClientId=self.physics_client)
+        self._apply_texture(body_id, metadata)
         
         return body_id
         
     def _load_gso_object(self, metadata: ObjectMetadata) -> int:
-        """Load GSO object using OBJ mesh with blue coloring"""
+        """Load GSO object using OBJ mesh with texture support"""
         collision_shape = p.createCollisionShape(
             p.GEOM_MESH,
             fileName=metadata.mesh_file,
@@ -257,12 +247,10 @@ class ObjectLibrary:
             physicsClientId=self.physics_client
         )
         
-        # GSO objects get blue color to distinguish from YCB
         visual_shape = p.createVisualShape(
             p.GEOM_MESH,
             fileName=metadata.mesh_file,
             meshScale=[1.0, 1.0, 1.0],
-            rgbaColor=[0.3, 0.3, 1.0, 1.0],  # Blue color
             physicsClientId=self.physics_client
         )
         
@@ -274,7 +262,25 @@ class ObjectLibrary:
             physicsClientId=self.physics_client
         )
         
+        self._apply_texture(body_id, metadata)
+        
         return body_id
+    
+    def _apply_texture(self, body_id: int, metadata: ObjectMetadata) -> None:
+        """Apply texture or fallback color to object"""
+        if metadata.texture_file and Path(metadata.texture_file).exists():
+            try:
+                texture_id = p.loadTexture(metadata.texture_file, physicsClientId=self.physics_client)
+                p.changeVisualShape(body_id, -1, textureUniqueId=texture_id, physicsClientId=self.physics_client)
+            except Exception as e:
+                print(f"Texture loading failed for {metadata.object_id}: {e}")
+                # Fallback to category color
+                color = self._get_category_color(metadata.category)
+                p.changeVisualShape(body_id, -1, rgbaColor=color, physicsClientId=self.physics_client)
+        else:
+            # No texture - use category color
+            color = self._get_category_color(metadata.category)
+            p.changeVisualShape(body_id, -1, rgbaColor=color, physicsClientId=self.physics_client)
     
     def _get_category_color(self, category: str) -> list:
         """Get color based on object category"""

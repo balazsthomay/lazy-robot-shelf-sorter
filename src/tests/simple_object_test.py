@@ -79,7 +79,8 @@ class SimpleObjectValidator:
         
         
         # Select 3 YCB objects (prefer simple shapes)
-        ycb_priority = ['ycb_025_mug', 'ycb_013_apple', 'ycb_011_banana']
+        # ycb_priority = ['ycb_025_mug', 'ycb_013_apple', 'ycb_011_banana']
+        ycb_priority = ['ycb_015_peach', 'ycb_029_plate', 'ycb_033_spatula']
         selected_ycb = []
         for obj in ycb_priority:
             if obj in ycb_objects:
@@ -95,9 +96,12 @@ class SimpleObjectValidator:
                     break
                     
         # Select 3 GSO objects (prefer simple containers)
-        gso_priority = ['gso_Threshold_Porcelain_Coffee_Mug_All_Over_Bead_White',
-                       'gso_ACE_Coffee_Mug_Kristen_16_oz_cup',
-                       'gso_Threshold_Porcelain_Teapot_White']
+        # gso_priority = ['gso_Threshold_Porcelain_Coffee_Mug_All_Over_Bead_White',
+        #                'gso_ACE_Coffee_Mug_Kristen_16_oz_cup',
+        #                'gso_Threshold_Porcelain_Teapot_White']
+        gso_priority = ['gso_Diet_Pepsi_Soda_Cola12_Pack_12_oz_Cans',
+                       'gso_Nestle_Nips_Hard_Candy_Peanut_Butter',
+                       'gso_Whey_Protein_Vanilla']
         selected_gso = []
         for obj in gso_priority:
             if obj in gso_objects:

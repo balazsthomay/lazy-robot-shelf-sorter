@@ -13,8 +13,8 @@ from interfaces import SimulationComponent
 
 class RobotController(SimulationComponent):
     """Franka Panda robot controller (7-DOF arm + 2-DOF gripper)"""
-    
-    def __init__(self, physics_client: int = None):
+
+    def __init__(self, physics_client: Optional[int] = None):
         self.robot_id: Optional[int] = None
         self.num_joints = 0
         self.joint_indices: List[int] = []
