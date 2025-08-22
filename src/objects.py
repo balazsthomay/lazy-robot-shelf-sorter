@@ -191,57 +191,55 @@ class ObjectLibrary:
         
     def _load_ycb_object(self, metadata: ObjectMetadata) -> int:
         """Load YCB object using STL mesh"""
-        try:
-            collision_shape = p.createCollisionShape(
-                p.GEOM_MESH,
-                fileName=metadata.mesh_file,
-                meshScale=[1, 1, 1]
-            )
-            
-            visual_shape = p.createVisualShape(
-                p.GEOM_MESH,
-                fileName=metadata.mesh_file,
-                meshScale=[1, 1, 1]
-            )
-            
-            body_id = p.createMultiBody(
-                baseMass=0.1,
-                baseCollisionShapeIndex=collision_shape,
-                baseVisualShapeIndex=visual_shape,
-                basePosition=[0, 0, 1]
-            )
-            
-            return body_id
-        except:
-            # Fallback to simple shape
-            return p.loadURDF("cube.urdf", [0, 0, 1])
+        collision_shape = p.createCollisionShape(
+            p.GEOM_MESH,
+            fileName=metadata.mesh_file,
+            meshScale=[1, 1, 1],
+            physicsClientId=self.physics_client
+        )
+        
+        visual_shape = p.createVisualShape(
+            p.GEOM_MESH,
+            fileName=metadata.mesh_file,
+            meshScale=[1, 1, 1],
+            physicsClientId=self.physics_client
+        )
+        
+        body_id = p.createMultiBody(
+            baseMass=0.1,
+            baseCollisionShapeIndex=collision_shape,
+            baseVisualShapeIndex=visual_shape,
+            basePosition=[0, 0, 1],
+            physicsClientId=self.physics_client
+        )
+        
+        return body_id
         
     def _load_gso_object(self, metadata: ObjectMetadata) -> int:
         """Load GSO object using OBJ mesh"""
-        try:
-            collision_shape = p.createCollisionShape(
-                p.GEOM_MESH,
-                fileName=metadata.mesh_file,
-                meshScale=[0.01, 0.01, 0.01]
-            )
-            
-            visual_shape = p.createVisualShape(
-                p.GEOM_MESH,
-                fileName=metadata.mesh_file,
-                meshScale=[0.01, 0.01, 0.01]
-            )
-            
-            body_id = p.createMultiBody(
-                baseMass=0.1,
-                baseCollisionShapeIndex=collision_shape,
-                baseVisualShapeIndex=visual_shape,
-                basePosition=[0, 0, 1]
-            )
-            
-            return body_id
-        except:
-            # Fallback to simple shape
-            return p.loadURDF("cube.urdf", [0, 0, 1])
+        collision_shape = p.createCollisionShape(
+            p.GEOM_MESH,
+            fileName=metadata.mesh_file,
+            meshScale=[1.0, 1.0, 1.0],
+            physicsClientId=self.physics_client
+        )
+        
+        visual_shape = p.createVisualShape(
+            p.GEOM_MESH,
+            fileName=metadata.mesh_file,
+            meshScale=[1.0, 1.0, 1.0],
+            physicsClientId=self.physics_client
+        )
+        
+        body_id = p.createMultiBody(
+            baseMass=0.1,
+            baseCollisionShapeIndex=collision_shape,
+            baseVisualShapeIndex=visual_shape,
+            basePosition=[0, 0, 1],
+            physicsClientId=self.physics_client
+        )
+        
+        return body_id
         
     def get_object_count(self) -> int:
         """Get total number of available objects"""

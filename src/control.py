@@ -20,23 +20,34 @@ class RobotController(SimulationComponent):
         self.joint_indices: List[int] = []
         self.physics_client = physics_client
         
-    def initialize(self) -> None:
+    def initialize(self) -> bool:
         """Load and setup robot"""
-        p.setAdditionalSearchPath(pybullet_data.getDataPath())
-        
-        # Use Franka Panda robot (7-DOF arm + 2-DOF gripper)
-        self.robot_id = p.loadURDF("franka_panda/panda.urdf", [0, -0.8, 0], useFixedBase=True, physicsClientId=self.physics_client)
-        self.num_joints = p.getNumJoints(self.robot_id, physicsClientId=self.physics_client)
-        
-        # Get controllable joints
-        self.joint_indices = []
-        for i in range(self.num_joints):
-            joint_info = p.getJointInfo(self.robot_id, i, physicsClientId=self.physics_client)
-            if joint_info[2] != p.JOINT_FIXED:  # Skip fixed joints
-                self.joint_indices.append(i)
-        
-        # For Franka Panda: arm joints are 0-6, end-effector is at joint 6 (7th arm joint)
-        self.arm_end_effector_link = 6  # panda_joint7 is the arm tip
+        try:
+            p.setAdditionalSearchPath(pybullet_data.getDataPath())
+            
+            # Use Franka Panda robot (7-DOF arm + 2-DOF gripper)
+            self.robot_id = p.loadURDF("franka_panda/panda.urdf", [0, -0.8, 0], useFixedBase=True, physicsClientId=self.physics_client)
+            
+            if self.robot_id < 0:
+                print("Failed to load Franka Panda URDF")
+                return False
+                
+            self.num_joints = p.getNumJoints(self.robot_id, physicsClientId=self.physics_client)
+            
+            # Get controllable joints
+            self.joint_indices = []
+            for i in range(self.num_joints):
+                joint_info = p.getJointInfo(self.robot_id, i, physicsClientId=self.physics_client)
+                if joint_info[2] != p.JOINT_FIXED:  # Skip fixed joints
+                    self.joint_indices.append(i)
+            
+            # For Franka Panda: arm joints are 0-6, end-effector is at joint 6 (7th arm joint)
+            self.arm_end_effector_link = 6  # panda_joint7 is the arm tip
+            return True
+            
+        except Exception as e:
+            print(f"Robot initialization failed: {e}")
+            return False
                 
     def move_to_position(self, target_position: Tuple[float, float, float]) -> bool:
         """Move end effector to target position"""
@@ -62,6 +73,23 @@ class RobotController(SimulationComponent):
                     physicsClientId=self.physics_client
                 )
         
+        return True
+        
+    def move_to_joint_positions(self, joint_positions: List[float]) -> bool:
+        """Move robot to specific joint positions"""
+        if self.robot_id is None:
+            return False
+            
+        # Apply joint positions to controllable joints
+        for i, joint_idx in enumerate(self.joint_indices):
+            if i < len(joint_positions):
+                p.setJointMotorControl2(
+                    self.robot_id,
+                    joint_idx,
+                    p.POSITION_CONTROL,
+                    targetPosition=joint_positions[i],
+                    physicsClientId=self.physics_client
+                )
         return True
         
     def get_end_effector_position(self) -> Tuple[float, float, float]:
@@ -120,6 +148,14 @@ class WorkspaceAnalyzer:
             
         reachable = self.check_reachability(positions)
         return sum(reachable) / len(reachable) * 100
+        
+    def get_workspace_bounds(self) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
+        """Get approximate workspace bounds (min_xyz, max_xyz)"""
+        # Approximate workspace bounds for Franka Panda
+        # Based on typical reach of ~0.9m with safety margins
+        min_bounds = (-0.7, -0.7, 0.1)   # x, y, z minimums
+        max_bounds = (0.7, 0.7, 1.2)     # x, y, z maximums
+        return (min_bounds, max_bounds)
 
 
 def main():
