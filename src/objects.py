@@ -22,6 +22,8 @@ class ObjectMetadata:
     xml_file: str
     category: str
     estimated_size: float  # rough diameter for sorting
+    texture_file: Optional[str] = None  # Path to texture file
+    material_file: Optional[str] = None  # Path to MTL file (YCB only)
     
 
 class ObjectLibrary:
@@ -49,33 +51,51 @@ class ObjectLibrary:
             if not obj_dir.is_dir():
                 continue
                 
-            # Look for XML file in tsdf subdirectory
+            # Look for files in tsdf subdirectory
             tsdf_dir = obj_dir / "tsdf"
             if not tsdf_dir.exists():
                 continue
                 
+            # Try textured files first, fallback to nontextured
+            textured_obj = tsdf_dir / "textured.obj"
+            textured_mtl = tsdf_dir / "textured.mtl"
+            textured_png = tsdf_dir / "textured.png"
             xml_file = tsdf_dir / "nontextured.xml"
-            stl_file = tsdf_dir / "nontextured.stl"
             
-            if xml_file.exists() and stl_file.exists():
-                # Extract category from directory name (e.g., "025_mug" -> "mug")
-                parts = obj_dir.name.split('_', 1)
-                category = parts[1] if len(parts) > 1 else "unknown"
-                
-                # Estimate size from STL file size (rough approximation)
-                file_size_kb = stl_file.stat().st_size / 1024
-                estimated_size = min(0.3, max(0.05, file_size_kb / 1000))  # 5cm to 30cm
-                
-                metadata = ObjectMetadata(
-                    object_id=f"ycb_{obj_dir.name}",
-                    name=obj_dir.name,
-                    file_format="ycb",
-                    mesh_file=str(stl_file),
-                    xml_file=str(xml_file),
-                    category=category,
-                    estimated_size=estimated_size
-                )
-                self.metadata[metadata.object_id] = metadata
+            # Use textured OBJ if available for texture support
+            if textured_obj.exists() and textured_mtl.exists() and xml_file.exists():
+                mesh_file = textured_obj
+                material_file = textured_mtl
+                texture_file = textured_png if textured_png.exists() else None
+            else:
+                # Fallback to nontextured STL 
+                nontextured_stl = tsdf_dir / "nontextured.stl"
+                if not (xml_file.exists() and nontextured_stl.exists()):
+                    continue
+                mesh_file = nontextured_stl
+                material_file = None
+                texture_file = None
+            
+            # Extract category from directory name (e.g., "025_mug" -> "mug")
+            parts = obj_dir.name.split('_', 1)
+            category = parts[1] if len(parts) > 1 else "unknown"
+            
+            # Estimate size from mesh file size (rough approximation)
+            file_size_kb = mesh_file.stat().st_size / 1024
+            estimated_size = min(0.3, max(0.05, file_size_kb / 1000))  # 5cm to 30cm
+            
+            metadata = ObjectMetadata(
+                object_id=f"ycb_{obj_dir.name}",
+                name=obj_dir.name,
+                file_format="ycb",
+                mesh_file=str(mesh_file),
+                xml_file=str(xml_file),
+                category=category,
+                estimated_size=estimated_size,
+                texture_file=str(texture_file) if texture_file else None,
+                material_file=str(material_file) if material_file else None
+            )
+            self.metadata[metadata.object_id] = metadata
                 
     def _scan_gso_objects(self) -> None:
         """Scan GSO objects (XML+OBJ format)"""
@@ -88,6 +108,7 @@ class ObjectLibrary:
                 
             xml_file = obj_dir / "model.xml"
             obj_file = obj_dir / "model.obj"
+            texture_file = obj_dir / "texture.png"
             
             if xml_file.exists() and obj_file.exists():
                 # Extract category from directory name
@@ -104,7 +125,9 @@ class ObjectLibrary:
                     mesh_file=str(obj_file),
                     xml_file=str(xml_file),
                     category=category,
-                    estimated_size=estimated_size
+                    estimated_size=estimated_size,
+                    texture_file=str(texture_file) if texture_file.exists() else None,
+                    material_file=None  # GSO doesn't use MTL files
                 )
                 self.metadata[metadata.object_id] = metadata
                 
@@ -190,7 +213,7 @@ class ObjectLibrary:
         return success_count > 0
         
     def _load_ycb_object(self, metadata: ObjectMetadata) -> int:
-        """Load YCB object using STL mesh"""
+        """Load YCB object with manual texture loading"""
         collision_shape = p.createCollisionShape(
             p.GEOM_MESH,
             fileName=metadata.mesh_file,
@@ -212,11 +235,21 @@ class ObjectLibrary:
             basePosition=[0, 0, 1],
             physicsClientId=self.physics_client
         )
+        
+        # Apply texture manually if available
+        if metadata.texture_file and Path(metadata.texture_file).exists():
+            try:
+                texture_id = p.loadTexture(metadata.texture_file, physicsClientId=self.physics_client)
+                p.changeVisualShape(body_id, -1, textureUniqueId=texture_id, physicsClientId=self.physics_client)
+            except Exception:
+                # Fallback to category color if texture loading fails
+                color = self._get_category_color(metadata.category)
+                p.changeVisualShape(body_id, -1, rgbaColor=color, physicsClientId=self.physics_client)
         
         return body_id
         
     def _load_gso_object(self, metadata: ObjectMetadata) -> int:
-        """Load GSO object using OBJ mesh"""
+        """Load GSO object using OBJ mesh with blue coloring"""
         collision_shape = p.createCollisionShape(
             p.GEOM_MESH,
             fileName=metadata.mesh_file,
@@ -224,10 +257,12 @@ class ObjectLibrary:
             physicsClientId=self.physics_client
         )
         
+        # GSO objects get blue color to distinguish from YCB
         visual_shape = p.createVisualShape(
             p.GEOM_MESH,
             fileName=metadata.mesh_file,
             meshScale=[1.0, 1.0, 1.0],
+            rgbaColor=[0.3, 0.3, 1.0, 1.0],  # Blue color
             physicsClientId=self.physics_client
         )
         
@@ -240,6 +275,20 @@ class ObjectLibrary:
         )
         
         return body_id
+    
+    def _get_category_color(self, category: str) -> list:
+        """Get color based on object category"""
+        color_map = {
+            'apple': [1.0, 0.2, 0.2, 1.0],     # Red
+            'banana': [1.0, 1.0, 0.2, 1.0],    # Yellow
+            'mug': [0.8, 0.4, 0.2, 1.0],       # Brown
+            'cup': [0.9, 0.9, 0.9, 1.0],       # Light gray
+            'bowl': [0.7, 0.7, 0.9, 1.0],      # Light blue
+            'bottle': [0.2, 0.8, 0.2, 1.0],    # Green
+            'can': [0.9, 0.5, 0.1, 1.0],       # Orange
+            'box': [0.8, 0.6, 0.4, 1.0],       # Tan
+        }
+        return color_map.get(category, [0.7, 0.7, 0.7, 1.0])  # Default gray
         
     def get_object_count(self) -> int:
         """Get total number of available objects"""

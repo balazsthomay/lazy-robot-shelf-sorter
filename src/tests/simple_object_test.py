@@ -115,6 +115,23 @@ class SimpleObjectValidator:
         print(f"\n   Selected YCB objects: {selected_ycb}")
         print(f"   Selected GSO objects: {selected_gso}")
         
+        # Debug: Check what files are actually detected
+        print(f"\n   DEBUG - Checking file paths for selected objects:")
+        for obj_id in selected_ycb[:1]:  # Check first YCB object
+            metadata = self.object_library.metadata.get(obj_id)
+            if metadata:
+                print(f"   {obj_id}:")
+                print(f"      mesh_file: {metadata.mesh_file}")
+                print(f"      texture_file: {metadata.texture_file}")
+                print(f"      material_file: {metadata.material_file}")
+                
+        for obj_id in selected_gso[:1]:  # Check first GSO object
+            metadata = self.object_library.metadata.get(obj_id)
+            if metadata:
+                print(f"   {obj_id}:")
+                print(f"      mesh_file: {metadata.mesh_file}")
+                print(f"      texture_file: {metadata.texture_file}")
+        
         return selected_ycb, selected_gso
         
     def load_and_place_objects(self, ycb_objects: list, gso_objects: list) -> bool:
