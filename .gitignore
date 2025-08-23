@@ -21,3 +21,8 @@ src/tests/__pycache__/
 src/.pytest_cache/
 src/.coverage
 src/tests/.pytest_cache/
+
+src/grasping/__pycache__/
+src/grasping/tests/__pycache__/
+
+data/models/
