@@ -166,15 +166,17 @@ class VisionSystemIntegrator:
         )
         proj_matrix = np.array(proj_matrix).reshape(4, 4)
         
-        # Extract intrinsic matrix from projection matrix
-        fx = proj_matrix[0, 0] * width / 2
-        fy = proj_matrix[1, 1] * height / 2
-        cx = width / 2
-        cy = height / 2
+        # Calculate intrinsics correctly - PyBullet FOV is vertical, not horizontal
+        # First compute focal length from vertical FOV and image height
+        f = height / (2.0 * np.tan(np.radians(fov) / 2.0))
+        fx = f * aspect  # Scale by aspect ratio for horizontal focal length
+        fy = f           # Vertical focal length directly from FOV
+        cx = width / 2.0
+        cy = height / 2.0
         
         intrinsics = np.array([
             [fx, 0,  cx],
-            [0,  fy, cy],
+            [0,  fy, cy], 
             [0,  0,  1]
         ])
         

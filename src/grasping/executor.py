@@ -59,7 +59,8 @@ class GraspExecutor:
         
         # Execution parameters
         self.max_retries = 3
-        self.trajectory_step_time = 0.1   # Time per trajectory step
+        self.trajectory_step_time = 0.03  # Even smaller time steps for very smooth motion
+        self.gui_observation_delay = 0.01  # Minimal delay
         
         logger.info("Initialized grasp executor")
         
@@ -99,11 +100,43 @@ class GraspExecutor:
                         force=50
                     )
                     
-                # Wait for motion to complete
+                # Smooth motion execution
                 if i > 0:
                     time_step = trajectory.timestamps[i] - trajectory.timestamps[i-1]
-                    steps = int(time_step / self.trajectory_step_time)
-                    for _ in range(steps):
+                    steps = max(10, int(time_step / self.trajectory_step_time))  # Many small steps for smoothness
+                    
+                    # Interpolate smoothly between previous and current joint positions
+                    prev_joints = trajectory.joint_positions[i-1]
+                    curr_joints = trajectory.joint_positions[i]
+                    prev_gripper = trajectory.gripper_widths[i-1]
+                    curr_gripper = trajectory.gripper_widths[i]
+                    
+                    for step in range(steps):
+                        # Linear interpolation
+                        alpha = (step + 1) / steps
+                        interp_joints = prev_joints + alpha * (curr_joints - prev_joints)
+                        interp_gripper = prev_gripper + alpha * (curr_gripper - prev_gripper)
+                        
+                        # Set interpolated joint targets
+                        for joint_idx, target_pos in enumerate(interp_joints):
+                            p.setJointMotorControl2(
+                                self.robot_id,
+                                joint_idx,
+                                p.POSITION_CONTROL,
+                                targetPosition=target_pos,
+                                force=240
+                            )
+                        
+                        # Set interpolated gripper targets
+                        for gripper_joint in self.gripper_joints:
+                            p.setJointMotorControl2(
+                                self.robot_id,
+                                gripper_joint,
+                                p.POSITION_CONTROL,
+                                targetPosition=interp_gripper/2,
+                                force=50
+                            )
+                        
                         p.stepSimulation()
                         time.sleep(self.trajectory_step_time)
                         
@@ -198,6 +231,7 @@ class GraspExecutor:
             Execution result with success metrics
         """
         logger.info(f"Executing grasp at position {grasp_pose.position}")
+        print("   📍 Planning approach trajectory...")
         
         # Get initial object positions for movement detection
         object_ids = self._get_object_ids_in_scene()
@@ -219,6 +253,7 @@ class GraspExecutor:
             )
             
         # Execute approach
+        print("   🤖 Executing approach trajectory - watch robot move to grasp position")
         if not self._execute_trajectory(approach_trajectory):
             return ExecutionResult(
                 success=False,
@@ -229,10 +264,11 @@ class GraspExecutor:
                 error_message="Approach trajectory execution failed"
             )
             
-        # Allow some settling time
-        for _ in range(10):
+        # Allow some settling time for GUI observation
+        print("   ✓ Approach complete - gripper closing on object")
+        for _ in range(20):
             p.stepSimulation()
-            time.sleep(0.01)
+            time.sleep(0.05)  # Slower settling for visual tracking
             
         # Measure grasp force
         max_force = self._measure_gripper_force()
@@ -250,6 +286,7 @@ class GraspExecutor:
         current_joints = np.array(current_joints)
         
         # Plan and execute lift
+        print("   ⬆️  Planning and executing lift trajectory")
         lift_trajectory = self.motion_planner.plan_lift_trajectory(
             current_joints, self.lift_height_target
         )

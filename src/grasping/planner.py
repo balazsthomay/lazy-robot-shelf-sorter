@@ -206,7 +206,7 @@ class MotionPlanner:
             # Create simple 3-point trajectory
             waypoints = [current_joints, pre_grasp_joints, final_joints]
             gripper_widths = [0.08, 0.08, grasp_pose.width]  # Open -> Open -> Close to target
-            timestamps = [0.0, 2.0, 4.0]  # 4 second total approach
+            timestamps = [0.0, 2.0, 4.0]  # 4 second total approach (smooth but watchable)
             
             trajectory = JointTrajectory(
                 joint_positions=waypoints,
@@ -263,7 +263,7 @@ class MotionPlanner:
             # Create lift trajectory
             waypoints = [grasp_joints, lift_joints]
             gripper_widths = [0.02, 0.02]  # Keep gripper closed
-            timestamps = [0.0, 2.0]
+            timestamps = [0.0, 2.0]  # 2 second lift (smooth but watchable)
             
             trajectory = JointTrajectory(
                 joint_positions=waypoints,

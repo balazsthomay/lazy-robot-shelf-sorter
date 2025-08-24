@@ -26,3 +26,4 @@ src/grasping/__pycache__/
 src/grasping/tests/__pycache__/
 
 data/models/
+.pytest_cache/
