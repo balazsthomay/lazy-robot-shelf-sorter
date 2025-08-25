@@ -68,10 +68,10 @@ class CoordinateTransformer:
         fx, fy = self.camera_intrinsics[0, 0], self.camera_intrinsics[1, 1]
         cx, cy = self.camera_intrinsics[0, 2], self.camera_intrinsics[1, 2]
         
-        # Camera coordinates (right-handed, z forward)
+        # Camera coordinates (OpenGL convention: Z negative forward)
         x_cam = (u - cx) * depth / fx
         y_cam = (v - cy) * depth / fy
-        z_cam = depth
+        z_cam = -depth  # Negative Z for OpenGL coordinate system
         
         # Homogeneous camera coordinates
         camera_point = np.array([x_cam, y_cam, z_cam, 1.0])
@@ -102,7 +102,7 @@ class CoordinateTransformer:
         # Transform to camera coordinates using world-to-camera transform
         camera_point = self.camera_extrinsics @ world_homo
         
-        if camera_point[2] <= 0:
+        if camera_point[2] >= 0:  # In OpenGL, Z negative means in front
             raise ValueError("Point behind camera")
             
         # Project to pixel coordinates
@@ -111,7 +111,7 @@ class CoordinateTransformer:
         
         u = int(camera_point[0] * fx / camera_point[2] + cx)
         v = int(camera_point[1] * fy / camera_point[2] + cy)
-        depth = camera_point[2]
+        depth = -camera_point[2]  # Return positive depth distance
         
         return u, v, depth
 
@@ -149,13 +149,14 @@ class VisionSystemIntegrator:
         Returns:
             Configured coordinate transformer
         """
-        # Create PyBullet view matrix
+        # Create PyBullet view matrix - needs to be transposed!
         view_matrix = p.computeViewMatrix(
             cameraEyePosition=camera_pos,
             cameraTargetPosition=camera_target,
             cameraUpVector=camera_up
         )
-        view_matrix = np.array(view_matrix).reshape(4, 4)
+        # PyBullet returns column-major, need to transpose to row-major
+        view_matrix = np.array(view_matrix).reshape(4, 4).T
         
         # Create projection matrix
         proj_matrix = p.computeProjectionMatrixFOV(
@@ -166,11 +167,11 @@ class VisionSystemIntegrator:
         )
         proj_matrix = np.array(proj_matrix).reshape(4, 4)
         
-        # Calculate intrinsics correctly - PyBullet FOV is vertical, not horizontal
-        # First compute focal length from vertical FOV and image height
+        # Calculate intrinsics correctly - for square pixels, fx = fy
+        # Compute focal length from vertical FOV and image height
         f = height / (2.0 * np.tan(np.radians(fov) / 2.0))
-        fx = f * aspect  # Scale by aspect ratio for horizontal focal length
-        fy = f           # Vertical focal length directly from FOV
+        fx = f  # Same focal length for both axes (square pixels)
+        fy = f
         cx = width / 2.0
         cy = height / 2.0
         

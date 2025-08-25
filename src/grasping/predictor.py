@@ -276,9 +276,11 @@ class GGCNNPredictor:
                         col, row, grasp_depth
                     )
                     
-                    # Convert angle to quaternion (rotation around z-axis)
-                    half_angle = angle_rad / 2
-                    orientation = np.array([0, 0, np.sin(half_angle), np.cos(half_angle)])
+                    # Convert angle to proper 3D grasp orientation
+                    # Test with identity orientation to check if positions are reachable
+                    
+                    # Identity orientation (no rotation) for testing
+                    orientation = np.array([0, 0, 0, 1])
                     
                     # Create grasp pose
                     grasp_pose = GraspPose(

@@ -27,3 +27,5 @@ src/grasping/tests/__pycache__/
 
 data/models/
 .pytest_cache/
+
+debug_output/

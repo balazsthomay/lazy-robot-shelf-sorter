@@ -19,6 +19,18 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class ExecutionMetrics:
+    """Detailed execution metrics for Phase 4.3."""
+    max_gripper_force: float      # Peak force during grasp (N)
+    avg_gripper_force: float      # Average force during hold (N)
+    object_displacement: float    # Total object movement (m)
+    lift_height_achieved: float   # Actual lift height (m)
+    grasp_stability_score: float  # 0-1 stability during lift
+    execution_time: float         # Total execution time (s)
+    contact_points: int           # Number of contact points detected
+    force_consistency: float      # Force variation during hold (0-1)
+
+@dataclass
 class ExecutionResult:
     """Result of grasp execution attempt."""
     success: bool
@@ -27,6 +39,8 @@ class ExecutionResult:
     lift_height_achieved: float   # Actual lift height achieved
     retry_count: int              # Number of retry attempts
     error_message: Optional[str] = None
+    # Enhanced metrics for Phase 4.3
+    metrics: Optional[ExecutionMetrics] = None
 
 
 class GraspExecutor:
@@ -56,6 +70,11 @@ class GraspExecutor:
         self.min_object_displacement = 0.01  # Minimum object movement (m)
         self.lift_height_target = 0.10    # Target lift height (m)
         self.lift_height_tolerance = 0.05 # Acceptable lift height error (m)
+        
+        # Enhanced metrics parameters for Phase 4.3
+        self.force_measurement_samples = 50  # Samples during force measurement
+        self.stability_threshold = 0.7       # Minimum stability score
+        self.min_contact_points = 2          # Minimum contact points for success
         
         # Execution parameters
         self.max_retries = 3
@@ -87,7 +106,8 @@ class GraspExecutor:
                         joint_idx,
                         p.POSITION_CONTROL,
                         targetPosition=target_pos,
-                        force=240  # Max force for Franka Panda
+                        force=240,  # Max force for Franka Panda
+                        maxVelocity=0.8  # Smooth, controlled movement
                     )
                     
                 # Set gripper targets
@@ -97,7 +117,8 @@ class GraspExecutor:
                         gripper_joint,
                         p.POSITION_CONTROL,
                         targetPosition=gripper_width/2,  # Each finger moves half the width
-                        force=50
+                        force=50,
+                        maxVelocity=0.3  # Slower gripper movement for gentle contact
                     )
                     
                 # Smooth motion execution
@@ -124,7 +145,8 @@ class GraspExecutor:
                                 joint_idx,
                                 p.POSITION_CONTROL,
                                 targetPosition=target_pos,
-                                force=240
+                                force=240,
+                                maxVelocity=0.8  # Smooth, controlled movement
                             )
                         
                         # Set interpolated gripper targets
@@ -134,7 +156,8 @@ class GraspExecutor:
                                 gripper_joint,
                                 p.POSITION_CONTROL,
                                 targetPosition=interp_gripper/2,
-                                force=50
+                                force=50,
+                                maxVelocity=0.3  # Slower gripper movement for gentle contact
                             )
                         
                         p.stepSimulation()
@@ -171,6 +194,96 @@ class GraspExecutor:
         except Exception as e:
             logger.debug(f"Force measurement failed: {e}")
             return 0.0
+    
+    def _measure_detailed_force_metrics(self) -> tuple[float, float, float]:
+        """
+        Measure detailed force metrics over time.
+        
+        Returns:
+            Tuple of (max_force, avg_force, force_consistency)
+        """
+        force_samples = []
+        
+        for _ in range(self.force_measurement_samples):
+            force = self._measure_gripper_force()
+            force_samples.append(force)
+            p.stepSimulation()
+            time.sleep(0.01)  # Small delay between samples
+            
+        if not force_samples:
+            return 0.0, 0.0, 0.0
+            
+        max_force = max(force_samples)
+        avg_force = np.mean(force_samples)
+        force_std = np.std(force_samples)
+        
+        # Consistency: higher is better (lower variation)
+        force_consistency = max(0.0, 1.0 - (force_std / max(avg_force, 1.0)))
+        
+        return max_force, avg_force, force_consistency
+    
+    def _measure_contact_points(self, object_ids: List[int]) -> int:
+        """
+        Count contact points between gripper and objects.
+        
+        Args:
+            object_ids: List of object IDs to check contact with
+            
+        Returns:
+            Total number of contact points
+        """
+        contact_count = 0
+        
+        for obj_id in object_ids:
+            contacts = p.getContactPoints(bodyA=self.robot_id, bodyB=obj_id)
+            # Filter for gripper contacts (joint indices 7 and 8)
+            gripper_contacts = [
+                c for c in contacts 
+                if c[3] in self.gripper_joints or c[4] in self.gripper_joints
+            ]
+            contact_count += len(gripper_contacts)
+            
+        return contact_count
+    
+    def _calculate_stability_score(self, 
+                                 initial_positions: List[np.ndarray],
+                                 object_ids: List[int],
+                                 num_samples: int = 30) -> float:
+        """
+        Calculate grasp stability during lift.
+        
+        Args:
+            initial_positions: Initial object positions
+            object_ids: Object IDs to track
+            num_samples: Number of stability samples
+            
+        Returns:
+            Stability score (0-1, higher is better)
+        """
+        if not object_ids:
+            return 0.0
+            
+        position_variations = []
+        
+        for _ in range(num_samples):
+            for i, obj_id in enumerate(object_ids):
+                current_pos = np.array(p.getBasePositionAndOrientation(obj_id)[0])
+                if i < len(initial_positions):
+                    # Measure position variation relative to lift direction
+                    xy_variation = np.linalg.norm(current_pos[:2] - initial_positions[i][:2])
+                    position_variations.append(xy_variation)
+            
+            p.stepSimulation()
+            time.sleep(0.02)
+        
+        if not position_variations:
+            return 0.0
+            
+        # Lower variation = higher stability
+        avg_variation = np.mean(position_variations)
+        stability = max(0.0, 1.0 - (avg_variation / 0.05))  # Normalize to 0-1
+        
+        return min(1.0, stability)
             
     def _detect_object_movement(self, 
                               object_ids: List[int],
@@ -222,14 +335,15 @@ class GraspExecutor:
         
     def execute_grasp(self, grasp_pose: GraspPose) -> ExecutionResult:
         """
-        Execute complete grasp sequence with success detection.
+        Execute complete grasp sequence with enhanced success detection.
         
         Args:
             grasp_pose: Target grasp pose
             
         Returns:
-            Execution result with success metrics
+            Execution result with detailed metrics
         """
+        start_time = time.time()
         logger.info(f"Executing grasp at position {grasp_pose.position}")
         print("   📍 Planning approach trajectory...")
         
@@ -266,17 +380,30 @@ class GraspExecutor:
             
         # Allow some settling time for GUI observation
         print("   ✓ Approach complete - gripper closing on object")
+        print("   🔍 Measuring grasp quality and contact stability...")
         for _ in range(20):
             p.stepSimulation()
             time.sleep(0.05)  # Slower settling for visual tracking
             
-        # Measure grasp force
-        max_force = self._measure_gripper_force()
+        # Measure detailed force metrics
+        max_force, avg_force, force_consistency = self._measure_detailed_force_metrics()
+        
+        # Count contact points
+        contact_points = self._measure_contact_points(object_ids)
         
         # Check object movement during grasp
         object_moved = self._detect_object_movement(
             object_ids, initial_positions, self.min_object_displacement
         )
+        
+        # Calculate object displacement magnitude
+        total_displacement = 0.0
+        if object_ids:
+            for i, obj_id in enumerate(object_ids):
+                if i < len(initial_positions):
+                    current_pos = np.array(p.getBasePositionAndOrientation(obj_id)[0])
+                    displacement = np.linalg.norm(current_pos - initial_positions[i])
+                    total_displacement = max(total_displacement, displacement)
         
         # Get current joint configuration for lift planning
         current_joints = []
@@ -292,36 +419,76 @@ class GraspExecutor:
         )
         
         lift_height_achieved = 0.0
+        stability_score = 0.0
+        
         if lift_trajectory.success:
             # Get initial end effector position
             initial_ef_state = p.getLinkState(self.robot_id, self.motion_planner.end_effector_link)
             initial_ef_height = initial_ef_state[0][2]
             
             # Execute lift
+            print("   📊 Measuring stability during lift...")
             if self._execute_trajectory(lift_trajectory):
                 # Measure achieved lift height
                 final_ef_state = p.getLinkState(self.robot_id, self.motion_planner.end_effector_link)
                 final_ef_height = final_ef_state[0][2]
                 lift_height_achieved = final_ef_height - initial_ef_height
                 
-        # Determine success based on multiple criteria
+                # Measure stability during lift
+                stability_score = self._calculate_stability_score(
+                    initial_positions, object_ids
+                )
+                
+        # Calculate execution time
+        execution_time = time.time() - start_time
+        
+        # Create detailed metrics
+        metrics = ExecutionMetrics(
+            max_gripper_force=max_force,
+            avg_gripper_force=avg_force,
+            object_displacement=total_displacement,
+            lift_height_achieved=lift_height_achieved,
+            grasp_stability_score=stability_score,
+            execution_time=execution_time,
+            contact_points=contact_points,
+            force_consistency=force_consistency
+        )
+        
+        # Enhanced success criteria for Phase 4.3
         force_success = max_force >= self.min_grasp_force
         lift_success = abs(lift_height_achieved - self.lift_height_target) < self.lift_height_tolerance
+        contact_success = contact_points >= self.min_contact_points
+        stability_success = stability_score >= self.stability_threshold
         
-        # Combined success criteria (at least 2 out of 3)
-        success_indicators = [force_success, object_moved, lift_success]
-        overall_success = sum(success_indicators) >= 2
+        # Combined success criteria (at least 3 out of 5)
+        success_indicators = [
+            force_success, object_moved, lift_success, 
+            contact_success, stability_success
+        ]
+        overall_success = sum(success_indicators) >= 3
         
-        logger.info(f"Grasp execution complete: force={max_force:.1f}N, "
-                   f"moved={object_moved}, lift={lift_height_achieved:.3f}m, "
-                   f"success={overall_success}")
+        # Log detailed results
+        logger.info(f"Grasp execution complete:")
+        logger.info(f"  Force: {max_force:.1f}N (avg: {avg_force:.1f}N, consistency: {force_consistency:.2f})")
+        logger.info(f"  Movement: {object_moved} (displacement: {total_displacement:.3f}m)")
+        logger.info(f"  Lift: {lift_height_achieved:.3f}m (target: {self.lift_height_target:.3f}m)")
+        logger.info(f"  Contacts: {contact_points} (min: {self.min_contact_points})")
+        logger.info(f"  Stability: {stability_score:.2f} (min: {self.stability_threshold:.2f})")
+        logger.info(f"  Success: {overall_success} ({sum(success_indicators)}/5 criteria met)")
+        
+        # Print user-friendly summary
+        print(f"   📊 Execution Metrics:")
+        print(f"      Force: {max_force:.1f}N | Movement: {'✓' if object_moved else '✗'} | Lift: {lift_height_achieved:.3f}m")
+        print(f"      Contacts: {contact_points} | Stability: {stability_score:.2f} | Time: {execution_time:.1f}s")
+        print(f"   {'🎯 SUCCESS' if overall_success else '❌ FAILED'}: {sum(success_indicators)}/5 criteria met")
         
         return ExecutionResult(
             success=overall_success,
             gripper_force=max_force,
             object_moved=object_moved,
             lift_height_achieved=lift_height_achieved,
-            retry_count=0
+            retry_count=0,
+            metrics=metrics
         )
         
     def execute_with_retry(self, grasp_poses: List[GraspPose]) -> ExecutionResult:
